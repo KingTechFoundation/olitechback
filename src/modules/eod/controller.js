@@ -90,7 +90,19 @@ const list = async (req, res, next) => {
     next(e);
   }
 };
-const getOne = async (req, res, next) => { try { const { data, error } = await supabase.from("eod_sessions").select("*").eq("id", req.params.id).single(); if (error) throw fail(error.message, 404); return ok(res, data); } catch (e) { next(e); } };
+const getOne = async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from("eod_sessions")
+      .select("*, profiles!eod_sessions_cashier_id_fkey(full_name)")
+      .eq("id", req.params.id)
+      .single();
+    if (error) throw fail(error.message, 404);
+    return ok(res, { ...data, cashier_name: data?.profiles?.full_name || null });
+  } catch (e) {
+    next(e);
+  }
+};
 const approve = async (req, res, next) => { try { const { data, error } = await supabase.from("eod_sessions").update({ status: "approved", reviewed_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
 const flag = async (req, res, next) => { try { const { data, error } = await supabase.from("eod_sessions").update({ status: "flagged", notes: req.body.notes, reviewed_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
 const report = async (req, res, next) => { try { const { data, error } = await supabase.from("eod_sessions").select("*, profiles!eod_sessions_cashier_id_fkey(full_name)").eq("date", req.params.date); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };

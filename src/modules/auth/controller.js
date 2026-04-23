@@ -1,13 +1,28 @@
 const { supabase } = require("../../config/supabase");
 const { ok, fail } = require("../../utils/http");
 
+const resolveLoginEmail = async (identifier) => {
+  const normalized = String(identifier || "").trim().toLowerCase();
+  if (!normalized) throw fail("Username is required.", 400);
+  if (normalized.includes("@")) return normalized;
+
+  // Username login without schema changes: resolve against Supabase Auth metadata.
+  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  if (error) throw fail(error.message || "Could not resolve username.", 400);
+  const users = data?.users || [];
+  const match = users.find((u) => String(u.user_metadata?.username || "").trim().toLowerCase() === normalized);
+  if (!match?.email) throw fail("Invalid credentials", 401);
+  return match.email;
+};
+
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
+    const loginEmail = await resolveLoginEmail(email);
     
     let result;
     try {
-      result = await supabase.auth.signInWithPassword({ email, password });
+      result = await supabase.auth.signInWithPassword({ email: loginEmail, password });
     } catch (err) {
       if (err.message?.includes('fetch failed') || err.code === 'UND_ERR_CONNECT_TIMEOUT') {
         throw fail("Internet connection timeout. Please check your network and try again.", 503);
@@ -47,7 +62,7 @@ const login = async (req, res, next) => {
       token: data.session.access_token, 
       refresh_token: data.session.refresh_token, 
       role: profile?.role, 
-      user: { ...profile, email: data.user.email } 
+      user: { ...profile, email: data.user.email, username: data.user.user_metadata?.username || data.user.email } 
     });
   } catch (e) { next(e); }
 };
@@ -69,7 +84,7 @@ const me = async (req, res, next) => {
   try {
     const { data, error } = await supabase.from("profiles").select("*").eq("id", req.user.id).single();
     if (error) throw fail(error.message, 400);
-    return ok(res, { ...data, email: req.user.email });
+    return ok(res, { ...data, email: req.user.email, username: req.user.username || req.user.email });
   } catch (e) { next(e); }
 };
 
@@ -89,13 +104,21 @@ const updateCredentials = async (req, res, next) => {
     if (verify.error || !verify.data?.session) throw fail("Current password is incorrect.", 401);
 
     const updatePayload = {};
-    if (username) updatePayload.email = username;
+    if (username) {
+      const authUserRes = await supabase.auth.admin.getUserById(req.user.id);
+      const existingMeta = authUserRes?.data?.user?.user_metadata || {};
+      updatePayload.user_metadata = { ...existingMeta, username };
+    }
     if (newPassword) updatePayload.password = newPassword;
 
     const { data, error } = await supabase.auth.admin.updateUserById(req.user.id, updatePayload);
     if (error) throw fail(error.message, 400);
 
-    return ok(res, { username: data?.user?.email || updatePayload.email || req.user.email }, "Credentials updated");
+    return ok(
+      res,
+      { username: data?.user?.user_metadata?.username || username || req.user.username || req.user.email },
+      "Credentials updated"
+    );
   } catch (e) { next(e); }
 };
 

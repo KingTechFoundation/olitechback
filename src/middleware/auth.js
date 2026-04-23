@@ -48,6 +48,7 @@ const authMiddleware = async (req, res, next) => {
     const userPayload = {
       id: userData.user.id,
       email: userData.user.email,
+      username: userData.user.user_metadata?.username || userData.user.email,
       role: profile.role,
       full_name: profile.full_name,
       token,

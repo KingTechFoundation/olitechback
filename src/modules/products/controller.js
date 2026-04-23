@@ -12,7 +12,7 @@ const list = async (req, res, next) => {
     
     if (req.query.search) {
       const s = String(req.query.search).trim();
-      if (s) q = q.or(`name.ilike.%${s}%,barcode.ilike.%${s}%,categories.name.ilike.%${s}%`);
+      if (s) q = q.or(`name.ilike.*${s}*,barcode.ilike.*${s}*,categories.name.ilike.*${s}*`);
     }
 
     const { data, count, error } = await q.range(from, from + limit - 1);

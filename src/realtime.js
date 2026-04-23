@@ -1,9 +1,21 @@
 const WebSocket = require("ws");
+const { WebSocketServer } = WebSocket;
 
 let wssInstance = null;
 
 const initRealtime = (server) => {
-  wssInstance = new WebSocket.Server({ server, path: "/ws" });
+  wssInstance = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    const rawUrl = String(request.url || "");
+    const pathname = rawUrl.split("?")[0];
+    if (pathname !== "/ws" && pathname !== "/api/ws") {
+      socket.destroy();
+      return;
+    }
+    wssInstance.handleUpgrade(request, socket, head, (client) => {
+      wssInstance.emit("connection", client, request);
+    });
+  });
   wssInstance.on("connection", (socket) => {
     socket.send(JSON.stringify({ type: "connected", ts: Date.now() }));
   });

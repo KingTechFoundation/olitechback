@@ -13,8 +13,24 @@ const list = async (req, res, next) => {
 const getOne = async (req, res, next) => { try { const { data, error } = await supabase.from("profiles").select("*").eq("id", req.params.id).single(); if (error) throw fail(error.message, 404); return ok(res, data); } catch (e) { next(e); } };
 const create = async (req, res, next) => {
   try {
-    const { email, password, full_name, role } = req.body;
-    const { data: au, error: ae } = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
+    const { email, username, password, full_name, role } = req.body;
+    const actorRole = String(req.user?.role || "");
+    if (actorRole === "owner" && role !== "cashier") {
+      throw fail("Owners can only create cashier accounts.", 403);
+    }
+
+    const normalizedUsername = String(username || (email ? String(email).split("@")[0] : ""))
+      .trim()
+      .toLowerCase();
+    if (!normalizedUsername) throw fail("Username is required.", 400);
+
+    const finalEmail = email || `${normalizedUsername}@cashier.local`;
+    const { data: au, error: ae } = await supabase.auth.admin.createUser({
+      email: finalEmail,
+      password,
+      email_confirm: true,
+      user_metadata: { username: normalizedUsername },
+    });
     if (ae) throw fail(ae.message);
     const { data, error } = await supabase.from("profiles").insert([{ id: au.user.id, full_name, role }]).select().single();
     if (error) throw fail(error.message);

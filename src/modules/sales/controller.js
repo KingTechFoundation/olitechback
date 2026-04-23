@@ -3,6 +3,7 @@ const { ok, paginated, fail } = require("../../utils/http");
 const { dayStartIso, dayEndIso } = require("../../utils/storeDayRange");
 const { buildReceipt } = require("../../utils/receiptGenerator");
 const { auditLogger } = require("../../utils/auditLogger");
+const { broadcastRealtime } = require("../../realtime");
 const { generateReceiptNumber, resolveItem, applyMovement, roundQty } = require("./service");
 
 const createSale = async (req, res, next) => {
@@ -126,6 +127,14 @@ const createSale = async (req, res, next) => {
     const change_due = Math.max(0, cashPaid - netTotal);
     const receipt    = buildReceipt({ sale, items: fullItems, payments: fullPayments, settings, cashierName: req.user.full_name, changeDue: change_due });
 
+    broadcastRealtime({
+      type: "sales_updated",
+      event: "sale_created",
+      sale_id: sale.id,
+      cashier_id,
+      total_amount: netTotal,
+    });
+
     return ok(res, { sale, items: fullItems, payments: fullPayments, receipt, change_due });
   } catch (e) { next(e); }
 };
@@ -209,6 +218,13 @@ const voidSale = async (req, res, next) => {
       .single();
 
     await auditLogger({ user_id: req.user.id, action: "VOID_SALE", entity_type: "sales", entity_id: sale.id, details: { reason: req.body.void_reason }, ip_address: req.ip });
+    broadcastRealtime({
+      type: "sales_updated",
+      event: "sale_voided",
+      sale_id: sale.id,
+      cashier_id: sale.cashier_id,
+      total_amount: Number(sale.total_amount || 0),
+    });
     return ok(res, updated);
   } catch (e) { next(e); }
 };

@@ -2,6 +2,19 @@ const { supabase } = require("../../config/supabase");
 const { ok, paginated, fail } = require("../../utils/http");
 const { quantityFromInventoryEmbed } = require("../../utils/inventoryEmbed");
 
+const normalizePackageFields = (payload) => {
+  const out = { ...(payload || {}) };
+  const isPackage = Boolean(out.is_package);
+  if (!isPackage) {
+    out.package_size = null;
+    out.package_selling_price = null;
+    return out;
+  }
+  out.package_size = Number(out.package_size);
+  out.package_selling_price = Number(out.package_selling_price);
+  return out;
+};
+
 const list = async (req, res, next) => {
   try {
     const page = Number(req.query.page || 1), limit = Number(req.query.limit || 20), from = (page - 1) * limit;
@@ -32,13 +45,18 @@ const create = async (req, res, next) => {
     const { data: s } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
     const { initial_stock = 0, ...productFields } = req.body;
     const isWeighed = Boolean(productFields.is_weighed);
-    const payload = {
+    const payload = normalizePackageFields({
       ...productFields,
       unit_of_measure: isWeighed ? (productFields.unit_of_measure || "kg") : (productFields.unit_of_measure || "piece"),
       low_stock_threshold: Number(req.body.low_stock_threshold ?? s.default_low_stock_threshold),
-    };
+    });
     const { data, error } = await supabase.from("products").insert([payload]).select().single();
-    if (error) throw fail(error.message.includes("barcode") ? "barcode must be unique across all products" : error.message);
+    if (error) {
+      const msg = String(error.message || "");
+      if (msg.toLowerCase().includes("barcode")) throw fail("barcode must be unique across all products");
+      if (msg.includes("products_package_size_check")) throw fail("Package size must be greater than 1 for packaged products.");
+      throw fail(msg);
+    }
     await supabase.from("inventory").insert([{ product_id: data.id, quantity_in_stock: Number(initial_stock || 0) }]);
     return ok(res, data);
   } catch (e) { next(e); }
@@ -47,7 +65,7 @@ const getOne = async (req, res, next) => { try { const { data, error } = await s
 const byBarcode = async (req, res, next) => { try { const { data, error } = await supabase.from("products").select("*, categories(name), inventory(quantity_in_stock)").eq("barcode", req.params.code).single(); if (error) throw fail("Product not found", 404); return ok(res, data); } catch (e) { next(e); } };
 const update = async (req, res, next) => {
   try {
-    const payload = { ...(req.body || {}) };
+    const payload = normalizePackageFields({ ...(req.body || {}) });
     // These fields are not columns on products and can break UPDATE queries.
     delete payload.initial_stock;
     delete payload.category_name;
@@ -55,10 +73,14 @@ const update = async (req, res, next) => {
 
     const { data, error } = await supabase.from("products").update(payload).eq("id", req.params.id).select().single();
     if (error) {
-      if (String(error.message || "").toLowerCase().includes("barcode")) {
+      const msg = String(error.message || "");
+      if (msg.toLowerCase().includes("barcode")) {
         throw fail("barcode must be unique across all products");
       }
-      throw fail(error.message);
+      if (msg.includes("products_package_size_check")) {
+        throw fail("Package size must be greater than 1 for packaged products.");
+      }
+      throw fail(msg);
     }
     if (!data) throw fail("Product not found", 404);
     return ok(res, data, "Product updated successfully");

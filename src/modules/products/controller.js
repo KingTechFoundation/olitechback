@@ -45,7 +45,27 @@ const create = async (req, res, next) => {
 };
 const getOne = async (req, res, next) => { try { const { data, error } = await supabase.from("products").select("*, categories(name), inventory(quantity_in_stock)").eq("id", req.params.id).single(); if (error) throw fail(error.message, 404); return ok(res, data); } catch (e) { next(e); } };
 const byBarcode = async (req, res, next) => { try { const { data, error } = await supabase.from("products").select("*, categories(name), inventory(quantity_in_stock)").eq("barcode", req.params.code).single(); if (error) throw fail("Product not found", 404); return ok(res, data); } catch (e) { next(e); } };
-const update = async (req, res, next) => { try { const { data, error } = await supabase.from("products").update(req.body).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
+const update = async (req, res, next) => {
+  try {
+    const payload = { ...(req.body || {}) };
+    // These fields are not columns on products and can break UPDATE queries.
+    delete payload.initial_stock;
+    delete payload.category_name;
+    delete payload.inventory;
+
+    const { data, error } = await supabase.from("products").update(payload).eq("id", req.params.id).select().single();
+    if (error) {
+      if (String(error.message || "").toLowerCase().includes("barcode")) {
+        throw fail("barcode must be unique across all products");
+      }
+      throw fail(error.message);
+    }
+    if (!data) throw fail("Product not found", 404);
+    return ok(res, data, "Product updated successfully");
+  } catch (e) {
+    next(e);
+  }
+};
 const updatePrice = async (req, res, next) => update(req, res, next);
 const deactivate = async (req, res, next) => { req.body = { is_active: false }; return update(req, res, next); };
 const lowStock = async (req, res, next) => { req.query.low_stock = "true"; return list(req, res, next); };

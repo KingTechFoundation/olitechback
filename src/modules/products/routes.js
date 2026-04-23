@@ -1,0 +1,16 @@
+const express = require("express");
+const { body } = require("express-validator");
+const { allowRoles } = require("../../middleware/rbac");
+const { validate } = require("../../utils/http");
+const c = require("./controller");
+const r = express.Router();
+r.use(allowRoles("owner", "cashier"));
+r.get("/", c.list);
+r.get("/low-stock", allowRoles("owner"), c.lowStock);
+r.get("/barcode/:code", c.byBarcode);
+r.get("/:id", c.getOne);
+r.post("/", allowRoles("owner"), [body("buying_price").isFloat({ gt: 0 }), body("selling_price").isFloat({ gt: 0 }), body("is_weighed").optional().isBoolean(), body("unit_of_measure").optional().isString(), body("low_stock_threshold").optional().isFloat({ gt: 0 }), body("initial_stock").optional().isFloat({ min: 0 }), body("is_package").optional().isBoolean(), body("package_size").optional().isInt({ gt: 1 }), body("package_selling_price").optional().isFloat({ gt: 0 })], (req, res, next) => { try { validate(req); if (req.body.is_package && (!req.body.package_size || !req.body.package_selling_price)) throw new Error("package_size and package_selling_price required if is_package = true"); } catch (e) { return next(e); } c.create(req, res, next); });
+r.put("/:id", allowRoles("owner"), c.update);
+r.patch("/:id/price", allowRoles("owner"), c.updatePrice);
+r.patch("/:id/deactivate", allowRoles("owner"), c.deactivate);
+module.exports = r;

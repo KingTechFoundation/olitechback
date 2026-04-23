@@ -1,0 +1,12 @@
+const express = require("express");
+const { allowRoles } = require("../../middleware/rbac");
+const c = require("./controller");
+const r = express.Router();
+r.use(allowRoles("owner"));
+r.get("/daily-sales", c.dailySales);
+r.get("/product-sales", c.productSales);
+r.get("/stock", c.stock);
+r.get("/cashier-performance", c.cashierPerformance);
+r.get("/profit-loss", c.profitLoss);
+r.get("/payment-methods", c.paymentMethods);
+module.exports = r;

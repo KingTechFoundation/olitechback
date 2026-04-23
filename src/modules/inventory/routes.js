@@ -1,0 +1,13 @@
+const express = require("express");
+const { body } = require("express-validator");
+const { allowRoles } = require("../../middleware/rbac");
+const { validate } = require("../../utils/http");
+const c = require("./controller");
+const r = express.Router();
+r.use(allowRoles("owner"));
+r.get("/", c.list);
+r.get("/:product_id/history", c.history);
+r.get("/:product_id", c.getOne);
+r.post("/stock-in", [body("product_id").isInt(), body("quantity").isFloat({ gt: 0 }), body("performed_by").isUUID()], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } c.stockIn(req, res, next); });
+r.post("/adjustment", [body("product_id").isInt(), body("quantity_change").isFloat(), body("performed_by").isUUID()], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } c.adjustment(req, res, next); });
+module.exports = r;

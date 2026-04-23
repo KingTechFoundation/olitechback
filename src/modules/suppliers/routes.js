@@ -1,0 +1,11 @@
+const express = require("express");
+const { allowRoles } = require("../../middleware/rbac");
+const c = require("./controller");
+const r = express.Router();
+r.use(allowRoles("owner"));
+r.get("/", c.list);
+r.post("/", c.create);
+r.get("/:id", c.getOne);
+r.put("/:id", c.update);
+r.patch("/:id/deactivate", c.deactivate);
+module.exports = r;

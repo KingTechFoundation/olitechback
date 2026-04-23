@@ -1,0 +1,8 @@
+const { supabase } = require("../../config/supabase");
+const { ok, paginated, fail } = require("../../utils/http");
+const list = async (req, res, next) => { try { const page = Number(req.query.page || 1), limit = Number(req.query.limit || 20), from = (page - 1) * limit; const { data, count, error } = await supabase.from("suppliers").select("*", { count: "exact" }).range(from, from + limit - 1); if (error) throw fail(error.message); return paginated(res, data, page, limit, count); } catch (e) { next(e); } };
+const create = async (req, res, next) => { try { const { data, error } = await supabase.from("suppliers").insert([req.body]).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
+const getOne = async (req, res, next) => { try { const { data, error } = await supabase.from("suppliers").select("*, products(*)").eq("id", req.params.id).single(); if (error) throw fail(error.message, 404); return ok(res, data); } catch (e) { next(e); } };
+const update = async (req, res, next) => { try { const { data, error } = await supabase.from("suppliers").update(req.body).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
+const deactivate = async (req, res, next) => { try { const { data, error } = await supabase.from("suppliers").update({ is_active: false }).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
+module.exports = { list, create, getOne, update, deactivate };

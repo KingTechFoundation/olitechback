@@ -1,0 +1,76 @@
+const { supabase } = require("../../config/supabase");
+const { ok, fail } = require("../../utils/http");
+
+const login = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    
+    let result;
+    try {
+      result = await supabase.auth.signInWithPassword({ email, password });
+    } catch (err) {
+      if (err.message?.includes('fetch failed') || err.code === 'UND_ERR_CONNECT_TIMEOUT') {
+        throw fail("Internet connection timeout. Please check your network and try again.", 503);
+      }
+      throw err;
+    }
+
+    const { data, error } = result;
+    if (error) {
+      if (error.message?.includes('fetch failed')) {
+        throw fail("Network error: Unable to reach authentication server. Please check your internet.", 503);
+      }
+      throw fail(error.message || "Invalid credentials", 401);
+    }
+    if (!data.session) throw fail("Invalid credentials", 401);
+    
+    let profileRes;
+    try {
+      profileRes = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", data.user.id)
+        .single();
+    } catch (err) {
+       throw fail("Connection timeout while loading profile. Please try again.", 503);
+    }
+      
+    const { data: profile, error: profileError } = profileRes;
+    if (profileError || !profile) {
+      if (profileError?.message?.includes('fetch failed')) {
+         throw fail("Network error while loading profile.", 503);
+      }
+      throw fail("Profile not found for this user.", 403);
+    }
+    
+    return ok(res, { 
+      token: data.session.access_token, 
+      refresh_token: data.session.refresh_token, 
+      role: profile?.role, 
+      user: profile 
+    });
+  } catch (e) { next(e); }
+};
+
+const logout = async (req, res, next) => {
+  try { await supabase.auth.signOut(); return ok(res, {}, "Logged out"); } catch (e) { next(e); }
+};
+
+const refresh = async (req, res, next) => {
+  try {
+    const { refresh_token } = req.body;
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+    if (error || !data.session) throw fail(error?.message || "Refresh failed", 401);
+    return ok(res, { token: data.session.access_token, refresh_token: data.session.refresh_token });
+  } catch (e) { next(e); }
+};
+
+const me = async (req, res, next) => {
+  try {
+    const { data, error } = await supabase.from("profiles").select("*").eq("id", req.user.id).single();
+    if (error) throw fail(error.message, 400);
+    return ok(res, data);
+  } catch (e) { next(e); }
+};
+
+module.exports = { login, logout, refresh, me };

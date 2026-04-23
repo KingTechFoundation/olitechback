@@ -1,0 +1,12 @@
+const express = require("express");
+const { body } = require("express-validator");
+const { allowRoles } = require("../../middleware/rbac");
+const { validate } = require("../../utils/http");
+const c = require("./controller");
+const r = express.Router();
+r.use(allowRoles("developer"));
+r.get("/", c.getSettings);
+r.put("/", c.updateSettings);
+r.patch("/payment-methods", [body("accepted_payment_methods").isArray({ min: 1 })], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } c.updatePaymentMethods(req, res, next); });
+r.patch("/low-stock-threshold", [body("default_low_stock_threshold").isInt({ min: 1 })], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } c.updateLowStockThreshold(req, res, next); });
+module.exports = r;

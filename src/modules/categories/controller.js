@@ -1,0 +1,7 @@
+const { supabase } = require("../../config/supabase");
+const { ok, paginated, fail } = require("../../utils/http");
+const list = async (req, res, next) => { try { const page = Number(req.query.page || 1), limit = Number(req.query.limit || 20), from = (page - 1) * limit; const { data, count, error } = await supabase.from("categories").select("*", { count: "exact" }).range(from, from + limit - 1); if (error) throw fail(error.message); return paginated(res, data, page, limit, count); } catch (e) { next(e); } };
+const create = async (req, res, next) => { try { const { data, error } = await supabase.from("categories").insert([req.body]).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
+const update = async (req, res, next) => { try { const { data, error } = await supabase.from("categories").update(req.body).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
+const remove = async (req, res, next) => { try { const { count } = await supabase.from("products").select("*", { count: "exact", head: true }).eq("category_id", req.params.id).eq("is_active", true); if (count > 0) throw fail("Cannot delete category with active products"); const { data, error } = await supabase.from("categories").update({ is_active: false }).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
+module.exports = { list, create, update, remove };

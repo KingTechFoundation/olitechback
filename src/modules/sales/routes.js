@@ -1,0 +1,12 @@
+const express = require("express");
+const { body } = require("express-validator");
+const { allowRoles } = require("../../middleware/rbac");
+const { validate } = require("../../utils/http");
+const c = require("./controller");
+const r = express.Router();
+r.get("/", allowRoles("cashier", "owner"), c.list);
+r.get("/:id", allowRoles("cashier", "owner"), c.getOne);
+r.get("/:id/receipt", allowRoles("cashier", "owner"), c.receipt);
+r.post("/", allowRoles("cashier", "owner"), [body("cashier_id").isUUID(), body("items").isArray({ min: 1 }), body("items.*.sold_as").isIn(["unit", "package"]), body("items.*.quantity").isFloat({ gt: 0 }), body("payments").isArray({ min: 1 }), body("payments.*.amount").isFloat({ gt: 0 })], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } c.createSale(req, res, next); });
+r.post("/:id/void", allowRoles("owner"), [body("void_reason").notEmpty()], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } c.voidSale(req, res, next); });
+module.exports = r;

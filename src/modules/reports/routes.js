@@ -9,4 +9,5 @@ r.get("/stock", c.stock);
 r.get("/cashier-performance", c.cashierPerformance);
 r.get("/profit-loss", c.profitLoss);
 r.get("/payment-methods", c.paymentMethods);
+r.get("/expenses", c.expensesSummary);
 module.exports = r;

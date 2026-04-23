@@ -321,4 +321,25 @@ const paymentMethods = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-module.exports = { dailySales, productSales, stock, cashierPerformance, profitLoss, paymentMethods };
+const expensesSummary = async (req, res, next) => {
+  try {
+    const from = req.query.from;
+    const to = req.query.to;
+    let q = supabase.from("expenses").select("id, amount, expense_date, category, description");
+    if (from && to) q = q.gte("expense_date", from).lte("expense_date", to);
+    const { data, error } = await q;
+    if (error) throw fail(error.message);
+    const rows = data || [];
+    const total = rows.reduce((acc, x) => acc + Number(x.amount || 0), 0);
+    const byCategory = rows.reduce((acc, x) => {
+      const key = x.category || "Other";
+      acc[key] = Number(acc[key] || 0) + Number(x.amount || 0);
+      return acc;
+    }, {});
+    return ok(res, { total, count: rows.length, by_category: byCategory, items: rows });
+  } catch (e) {
+    next(e);
+  }
+};
+
+module.exports = { dailySales, productSales, stock, cashierPerformance, profitLoss, paymentMethods, expensesSummary };

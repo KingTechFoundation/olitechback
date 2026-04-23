@@ -173,6 +173,17 @@ create table if not exists eod_sessions (
   unique(cashier_id, date)
 );
 
+create table if not exists expenses (
+  id bigserial primary key,
+  description text not null,
+  category text not null default 'Operations',
+  amount numeric(14,2) not null check (amount > 0),
+  expense_date date not null default current_date,
+  created_by uuid not null references profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists idx_sales_created_at on sales(created_at);
 create index if not exists idx_sales_cashier_created_status on sales(cashier_id, created_at, status);
 create index if not exists idx_sale_items_sale_id on sale_items(sale_id);
@@ -184,6 +195,8 @@ create index if not exists idx_stock_movements_product_created on stock_movement
 create index if not exists idx_audit_logs_created_at on audit_logs(created_at);
 create index if not exists idx_products_filter on products(category_id, supplier_id, is_active);
 create index if not exists idx_inventory_product_id on inventory(product_id);
+create index if not exists idx_expenses_date on expenses(expense_date);
+create index if not exists idx_expenses_created_by_date on expenses(created_by, expense_date);
 
 alter table profiles disable row level security;
 alter table categories disable row level security;
@@ -197,6 +210,7 @@ alter table payments disable row level security;
 alter table stock_movements disable row level security;
 alter table audit_logs disable row level security;
 alter table eod_sessions disable row level security;
+alter table expenses disable row level security;
 
 -- =========================================================
 -- Bootstrap profiles (replace UUIDs with real auth.users IDs)

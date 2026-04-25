@@ -90,6 +90,22 @@ const update = async (req, res, next) => {
 };
 const updatePrice = async (req, res, next) => update(req, res, next);
 const deactivate = async (req, res, next) => { req.body = { is_active: false }; return update(req, res, next); };
-const lowStock = async (req, res, next) => { req.query.low_stock = "true"; return list(req, res, next); };
+const lowStock = async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from("products")
+      .select("*, categories(name), inventory(quantity_in_stock)")
+      .order("name", { ascending: true });
+    if (error) throw fail(error.message);
+    const out = (data || []).filter((p) => {
+      const qty = quantityFromInventoryEmbed(p.inventory);
+      const threshold = Number(p.low_stock_threshold || 0);
+      return qty <= threshold;
+    });
+    return ok(res, out);
+  } catch (e) {
+    next(e);
+  }
+};
 
 module.exports = { list, create, getOne, byBarcode, update, updatePrice, deactivate, lowStock };

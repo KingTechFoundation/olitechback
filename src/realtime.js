@@ -2,6 +2,7 @@ const WebSocket = require("ws");
 const { WebSocketServer } = WebSocket;
 
 let wssInstance = null;
+const HEARTBEAT_MS = 25000;
 
 const initRealtime = (server) => {
   wssInstance = new WebSocketServer({ noServer: true });
@@ -17,8 +18,34 @@ const initRealtime = (server) => {
     });
   });
   wssInstance.on("connection", (socket) => {
+    socket.isAlive = true;
+    socket.on("pong", () => {
+      socket.isAlive = true;
+    });
     socket.send(JSON.stringify({ type: "connected", ts: Date.now() }));
   });
+  if (wssInstance.__heartbeatTimer) clearInterval(wssInstance.__heartbeatTimer);
+  wssInstance.__heartbeatTimer = setInterval(() => {
+    if (!wssInstance) return;
+    wssInstance.clients.forEach((client) => {
+      if (client.readyState !== WebSocket.OPEN) return;
+      if (client.isAlive === false) {
+        try {
+          client.terminate();
+        } catch {
+          // noop
+        }
+        return;
+      }
+      client.isAlive = false;
+      try {
+        client.ping();
+        client.send(JSON.stringify({ type: "heartbeat", ts: Date.now() }));
+      } catch {
+        // noop
+      }
+    });
+  }, HEARTBEAT_MS);
   return wssInstance;
 };
 

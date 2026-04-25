@@ -3,6 +3,7 @@ const { allowRoles } = require("../../middleware/rbac");
 const c = require("./controller");
 const r = express.Router();
 r.use(allowRoles("owner"));
+r.get("/dashboard-summary", c.dashboardSummary);
 r.get("/daily-sales", c.dailySales);
 r.get("/product-sales", c.productSales);
 r.get("/stock", c.stock);

@@ -342,4 +342,92 @@ const expensesSummary = async (req, res, next) => {
   }
 };
 
-module.exports = { dailySales, productSales, stock, cashierPerformance, profitLoss, paymentMethods, expensesSummary };
+const dashboardSummary = async (req, res, next) => {
+  try {
+    const date = req.query.date;
+    const from = req.query.from || date;
+    const to = req.query.to || date;
+    const [salesAgg, payRowsRes, profitRowsRes, expenseRowsRes, stockRowsRes, lowStockRes] = await Promise.all([
+      from && to ? aggregateCompletedSalesInRange(from, to) : aggregateCompletedSalesInRange(null, null),
+      (() => {
+        let q = supabase.from("payments").select("method, amount, sales!inner(status, created_at)").eq("sales.status", "completed");
+        if (from && to) q = inRange(q, from, to, "sales.created_at");
+        return q;
+      })(),
+      (() => {
+        let q = supabase
+          .from("sale_items")
+          .select("quantity,line_total,products(buying_price),sales!inner(created_at,status)")
+          .eq("sales.status", "completed");
+        if (from && to) q = inRange(q, from, to, "sales.created_at");
+        return q;
+      })(),
+      (() => {
+        let q = supabase.from("expenses").select("id, amount, expense_date, category");
+        if (from && to) q = q.gte("expense_date", from).lte("expense_date", to);
+        return q;
+      })(),
+      supabase
+        .from("products")
+        .select("id, name, buying_price, is_package, package_size, package_buying_price, low_stock_threshold, inventory(quantity_in_stock)"),
+      supabase.from("products").select("id, low_stock_threshold, inventory(quantity_in_stock)"),
+    ]);
+
+    if (payRowsRes.error) throw fail(payRowsRes.error.message);
+    if (profitRowsRes.error) throw fail(profitRowsRes.error.message);
+    if (expenseRowsRes.error) throw fail(expenseRowsRes.error.message);
+    if (stockRowsRes.error) throw fail(stockRowsRes.error.message);
+    if (lowStockRes.error) throw fail(lowStockRes.error.message);
+
+    const paymentData = (payRowsRes.data || []).reduce(
+      (acc, p) => ({ ...acc, [p.method]: Number(acc[p.method] || 0) + Number(p.amount || 0) }),
+      { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 }
+    );
+    const profitRows = profitRowsRes.data || [];
+    const revenue = profitRows.reduce((a, i) => a + Number(i.line_total), 0);
+    const cost = profitRows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0);
+    const profitData = { revenue, cost_of_goods: cost, profit: revenue - cost };
+    const expenseRows = expenseRowsRes.data || [];
+    const expenseData = {
+      total: expenseRows.reduce((acc, x) => acc + Number(x.amount || 0), 0),
+      count: expenseRows.length,
+    };
+    const stockRows = stockRowsRes.data || [];
+    const totalStockValue = stockRows.reduce((acc, p) => {
+      const qty = quantityFromInventoryEmbed(p.inventory);
+      const unitCost = stockUnitCost(p);
+      return acc + qty * unitCost;
+    }, 0);
+    const lowRows = lowStockRes.data || [];
+    const lowCount = lowRows.filter((p) => {
+      const qty = quantityFromInventoryEmbed(p.inventory);
+      return qty <= Number(p.low_stock_threshold || 0);
+    }).length;
+
+    return ok(res, {
+      date: date || from,
+      daily: {
+        transactions: Number(salesAgg.transactions || 0),
+        revenue: Number(salesAgg.revenue || 0),
+      },
+      payments: paymentData,
+      profit: profitData,
+      expenses: expenseData,
+      stock: { total_value: Number(totalStockValue || 0) },
+      low_stock_count: lowCount,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+module.exports = {
+  dailySales,
+  productSales,
+  stock,
+  cashierPerformance,
+  profitLoss,
+  paymentMethods,
+  expensesSummary,
+  dashboardSummary,
+};

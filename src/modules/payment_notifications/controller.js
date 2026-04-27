@@ -24,6 +24,7 @@ const create = async (req, res, next) => {
 
     if (error) throw fail(error.message);
     broadcastRealtime({ type: "payment_notifs_updated", event: "created", id: data.id });
+    broadcastRealtime({ type: "dashboard_refresh" });
     return ok(res, data, "Notification created");
   } catch (e) {
     next(e);

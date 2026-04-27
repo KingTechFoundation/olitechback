@@ -52,6 +52,7 @@ const initRealtime = (server) => {
 
 const broadcastRealtime = (payload) => {
   if (!wssInstance) return;
+  console.log("Broadcasting realtime event:", payload.type, payload.event || "");
   const msg = JSON.stringify({ ...payload, ts: Date.now() });
   wssInstance.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) client.send(msg);

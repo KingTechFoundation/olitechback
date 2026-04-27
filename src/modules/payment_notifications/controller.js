@@ -1,5 +1,6 @@
 const { supabase } = require("../../config/supabase");
 const { ok, fail } = require("../../utils/http");
+const { broadcastRealtime } = require("../../realtime");
 
 /** Developer: create a payment notification */
 const create = async (req, res, next) => {
@@ -22,6 +23,7 @@ const create = async (req, res, next) => {
       .single();
 
     if (error) throw fail(error.message);
+    broadcastRealtime({ type: "payment_notifs_updated", event: "created", id: data.id });
     return ok(res, data, "Notification created");
   } catch (e) {
     next(e);
@@ -79,6 +81,7 @@ const clear = async (req, res, next) => {
       .single();
 
     if (error) throw fail(error.message);
+    broadcastRealtime({ type: "payment_notifs_updated", event: "cleared", id });
     return ok(res, data, "Notification cleared");
   } catch (e) {
     next(e);
@@ -99,6 +102,7 @@ const restore = async (req, res, next) => {
       .single();
 
     if (error) throw fail(error.message);
+    broadcastRealtime({ type: "payment_notifs_updated", event: "restored", id });
     return ok(res, data, "Notification restored");
   } catch (e) {
     next(e);
@@ -117,6 +121,7 @@ const remove = async (req, res, next) => {
       .eq("id", id);
 
     if (error) throw fail(error.message);
+    broadcastRealtime({ type: "payment_notifs_updated", event: "deleted", id });
     return ok(res, {}, "Notification deleted");
   } catch (e) {
     next(e);

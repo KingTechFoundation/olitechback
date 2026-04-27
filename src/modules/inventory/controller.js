@@ -1,5 +1,6 @@
 const { supabase } = require("../../config/supabase");
 const { ok, fail } = require("../../utils/http");
+const { broadcastRealtime } = require("../../realtime");
 
 const list = async (req, res, next) => {
   try {
@@ -86,6 +87,8 @@ const applyMovement = async ({ product_id, quantity_change, movement_type, refer
 const stockIn = async (req, res, next) => {
   try {
     await applyMovement({ ...req.body, quantity_change: Number(req.body.quantity), movement_type: "stock_in" });
+    broadcastRealtime({ type: "inventory_updated", event: "stock_in", product_id: req.body.product_id });
+    broadcastRealtime({ type: "dashboard_refresh" });
     return ok(res, {}, "Stock added");
   } catch (e) {
     next(e);
@@ -95,6 +98,8 @@ const stockIn = async (req, res, next) => {
 const adjustment = async (req, res, next) => {
   try {
     await applyMovement({ ...req.body, movement_type: "adjustment" });
+    broadcastRealtime({ type: "inventory_updated", event: "adjustment", product_id: req.body.product_id });
+    broadcastRealtime({ type: "dashboard_refresh" });
     return ok(res, {}, "Stock adjusted");
   } catch (e) {
     next(e);

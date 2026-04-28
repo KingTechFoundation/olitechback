@@ -21,6 +21,8 @@ const listLoginLogs = async (req, res, next) => {
   } catch (e) {
     next(e);
   }
+};
+
 /** Developer: delete a specific login log */
 const deleteLoginLog = async (req, res, next) => {
   try {

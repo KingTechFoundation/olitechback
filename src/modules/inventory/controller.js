@@ -10,16 +10,17 @@ const list = async (req, res, next) => {
     const from = (page - 1) * limit;
     const search = req.query.search;
 
-    let q = supabase
+    let query = supabase
       .from("products")
       .select("*, inventory(id, quantity_in_stock, last_updated)", { count: "exact" });
 
     if (search) {
       const term = String(search).trim().replace(/[,%()]/g, " ");
-      q = q.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
+      // Use the proper syntax for OR filters on the primary table
+      query = query.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
     }
 
-    const { data: products, count, error } = await q
+    const { data: products, count, error } = await query
       .order("name", { ascending: true })
       .range(from, from + limit - 1);
 

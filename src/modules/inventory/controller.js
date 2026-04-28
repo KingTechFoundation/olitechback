@@ -7,6 +7,7 @@ const list = async (req, res, next) => {
     const page = Number(req.query.page || 1);
     const limit = Number(req.query.limit || 20);
     const from = (page - 1) * limit;
+    const search = req.query.search;
     let selectStr = search ? "*, products!inner(*)" : "*, products(*)";
     let q = supabase
       .from("inventory")

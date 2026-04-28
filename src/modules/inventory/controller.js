@@ -7,40 +7,24 @@ const list = async (req, res, next) => {
     const page = Number(req.query.page || 1);
     const limit = Number(req.query.limit || 20);
     const from = (page - 1) * limit;
+    let selectStr = search ? "*, products!inner(*)" : "*, products(*)";
     let q = supabase
-      .from("products")
-      .select("*, inventory(id, quantity_in_stock, last_updated)", { count: "exact" });
+      .from("inventory")
+      .select(selectStr, { count: "exact" });
 
     if (search) {
       const term = String(search).trim().replace(/[,%()]/g, " ");
-      q = q.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
+      q = q.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`, { foreignTable: "products" });
     }
 
-    const { data: products, count, error } = await q
-      .order("name", { ascending: true })
+    const { data, count, error } = await q
+      .order("product_id", { ascending: true })
       .range(from, from + limit - 1);
 
     if (error) {
       console.error("Inventory List Query Error:", error);
       throw fail(error.message);
     }
-
-    // Map to inventory-style structure
-    const data = (products || []).map(p => {
-      // Products joined with inventory return inventory as an array or object
-      const inv = Array.isArray(p.inventory) ? p.inventory[0] : p.inventory;
-      return {
-        id: inv?.id || `temp-${p.id}`,
-        product_id: p.id,
-        quantity_in_stock: Number(inv?.quantity_in_stock || 0),
-        last_updated: inv?.last_updated || p.updated_at || p.created_at,
-        products: {
-          name: p.name,
-          barcode: p.barcode,
-          low_stock_threshold: p.low_stock_threshold
-        }
-      };
-    });
 
     // Summary calculation (can stay as is or be optimized)
     const { data: allRows, error: err2 } = await supabase

@@ -7,11 +7,9 @@ const list = async (req, res, next) => {
     const page = Number(req.query.page || 1);
     const limit = Number(req.query.limit || 20);
     const from = (page - 1) * limit;
-    const search = req.query.search;
-
     let q = supabase
       .from("products")
-      .select("*, inventory!inner(*)", { count: "exact" });
+      .select("*, inventory(id, quantity_in_stock, last_updated)", { count: "exact" });
 
     if (search) {
       const term = String(search).trim().replace(/[,%()]/g, " ");
@@ -22,13 +20,17 @@ const list = async (req, res, next) => {
       .order("name", { ascending: true })
       .range(from, from + limit - 1);
 
-    if (error) throw fail(error.message);
+    if (error) {
+      console.error("Inventory List Query Error:", error);
+      throw fail(error.message);
+    }
 
-    // Map products back to the structure expected by the frontend
+    // Map to inventory-style structure
     const data = (products || []).map(p => {
+      // Products joined with inventory return inventory as an array or object
       const inv = Array.isArray(p.inventory) ? p.inventory[0] : p.inventory;
       return {
-        id: inv?.id,
+        id: inv?.id || `temp-${p.id}`,
         product_id: p.id,
         quantity_in_stock: Number(inv?.quantity_in_stock || 0),
         last_updated: inv?.last_updated || p.updated_at || p.created_at,
@@ -40,6 +42,7 @@ const list = async (req, res, next) => {
       };
     });
 
+    // Summary calculation (can stay as is or be optimized)
     const { data: allRows, error: err2 } = await supabase
       .from("inventory")
       .select("quantity_in_stock, products(low_stock_threshold)");
@@ -55,9 +58,9 @@ const list = async (req, res, next) => {
       const prod = row.products;
       const thrRaw = Array.isArray(prod) ? prod[0]?.low_stock_threshold : prod?.low_stock_threshold;
       const thr = thrRaw === null || thrRaw === undefined ? defaultThreshold : Number(thrRaw);
-      const q = Number(row.quantity_in_stock || 0);
-      if (q <= 0) out_of_stock += 1;
-      else if (q <= thr) low_stock += 1;
+      const qNum = Number(row.quantity_in_stock || 0);
+      if (qNum <= 0) out_of_stock += 1;
+      else if (qNum <= thr) low_stock += 1;
     }
 
     return res.json({

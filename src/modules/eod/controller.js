@@ -31,10 +31,14 @@ const submit = async (req, res, next) => {
     const expected_cash = await expectedCashFor(cashier_id, date);
     const discrepancy = Number(counted_cash) - expected_cash;
     
-    // Auto-generate notes based on discrepancy
-    let notes = "No problem";
-    if (discrepancy < 0) notes = `Shortage ${Math.abs(discrepancy)}`;
-    else if (discrepancy > 0) notes = `Excess ${discrepancy}`;
+    // Combine auto-generated notes with user justification
+    let systemNotes = "No problem";
+    if (discrepancy < 0) systemNotes = `Shortage ${Math.abs(discrepancy)}`;
+    else if (discrepancy > 0) systemNotes = `Excess ${discrepancy}`;
+
+    const notes = userNotes 
+      ? `${systemNotes} | Cashier Note: ${userNotes}` 
+      : systemNotes;
 
     const status = discrepancy === 0 ? "approved" : "pending";
 

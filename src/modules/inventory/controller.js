@@ -16,8 +16,10 @@ const list = async (req, res, next) => {
 
     if (search) {
       const term = String(search).trim().replace(/[,%()]/g, " ");
-      // Use the proper syntax for OR filters on the primary table
-      query = query.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
+      if (term) {
+        // Search across name and barcode globally
+        query = query.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
+      }
     }
 
     const { data: products, count, error } = await query

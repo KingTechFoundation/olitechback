@@ -8,16 +8,14 @@ const list = async (req, res, next) => {
     const page = Number(req.query.page || 1);
     const limit = Number(req.query.limit || 20);
     const from = (page - 1) * limit;
-    const search = req.query.search;
-
     let query = supabase
       .from("products")
       .select("*, inventory(id, quantity_in_stock, last_updated)", { count: "exact" });
 
-    if (search) {
-      const term = String(search).trim().replace(/[,%()]/g, " ");
-      if (term) {
-        // Search across name and barcode globally
+    if (req.query.search) {
+      const s = String(req.query.search).trim();
+      if (s) {
+        const term = s.replace(/[,%()]/g, " ");
         query = query.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
       }
     }

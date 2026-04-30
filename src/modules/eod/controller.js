@@ -17,7 +17,8 @@ const expectedCashFor = async (cashier_id, date) => {
 
 const submit = async (req, res, next) => {
   try {
-    const { cashier_id, date, counted_cash } = req.body;
+    const { cashier_id, date, counted_cash, notes: bodyNotes } = req.body;
+    const userNotes = typeof bodyNotes === "string" ? bodyNotes.trim() : "";
 
     const { data: existing, error: existingErr } = await supabase
       .from("eod_sessions")
@@ -36,8 +37,8 @@ const submit = async (req, res, next) => {
     if (discrepancy < 0) systemNotes = `Shortage ${Math.abs(discrepancy)}`;
     else if (discrepancy > 0) systemNotes = `Excess ${discrepancy}`;
 
-    const notes = userNotes 
-      ? `${systemNotes} | Cashier Note: ${userNotes}` 
+    const notes = userNotes
+      ? `${systemNotes} | Cashier Note: ${userNotes}`
       : systemNotes;
 
     const status = discrepancy === 0 ? "approved" : "pending";
@@ -107,7 +108,71 @@ const getOne = async (req, res, next) => {
     next(e);
   }
 };
-const approve = async (req, res, next) => { try { const { data, error } = await supabase.from("eod_sessions").update({ status: "approved", reviewed_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
-const flag = async (req, res, next) => { try { const { data, error } = await supabase.from("eod_sessions").update({ status: "flagged", notes: req.body.notes, reviewed_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", req.params.id).select().single(); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
-const report = async (req, res, next) => { try { const { data, error } = await supabase.from("eod_sessions").select("*, profiles!eod_sessions_cashier_id_fkey(full_name)").eq("date", req.params.date); if (error) throw fail(error.message); return ok(res, data); } catch (e) { next(e); } };
-module.exports = { submit, preview, list, getOne, approve, flag, report };
+const approve = async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from("eod_sessions")
+      .update({ status: "approved", reviewed_by: req.user.id, updated_at: new Date().toISOString() })
+      .eq("id", req.params.id)
+      .select()
+      .single();
+    if (error) throw fail(error.message);
+    return ok(res, data);
+  } catch (e) {
+    next(e);
+  }
+};
+
+const flag = async (req, res, next) => {
+  try {
+    const { data: cur, error: curErr } = await supabase
+      .from("eod_sessions")
+      .select("notes")
+      .eq("id", req.params.id)
+      .single();
+    if (curErr) throw fail(curErr.message);
+    const ownerNote = typeof req.body.notes === "string" ? req.body.notes.trim() : "";
+    const flagLine = ownerNote || "Flagged for manual review";
+    const merged = cur?.notes ? `${cur.notes}\n\n[Owner review]: ${flagLine}` : flagLine;
+
+    const { data, error } = await supabase
+      .from("eod_sessions")
+      .update({
+        status: "flagged",
+        notes: merged,
+        reviewed_by: req.user.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", req.params.id)
+      .select()
+      .single();
+    if (error) throw fail(error.message);
+    return ok(res, data);
+  } catch (e) {
+    next(e);
+  }
+};
+const report = async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from("eod_sessions")
+      .select("*, profiles!eod_sessions_cashier_id_fkey(full_name)")
+      .eq("date", req.params.date);
+    if (error) throw fail(error.message);
+    return ok(res, data);
+  } catch (e) {
+    next(e);
+  }
+};
+
+const remove = async (req, res, next) => {
+  try {
+    const { error } = await supabase.from("eod_sessions").delete().eq("id", req.params.id);
+    if (error) throw fail(error.message);
+    return ok(res, { id: req.params.id, deleted: true });
+  } catch (e) {
+    next(e);
+  }
+};
+
+module.exports = { submit, preview, list, getOne, approve, flag, report, remove };

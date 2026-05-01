@@ -180,9 +180,30 @@ const dailySales = async (req, res, next) => {
 
 const productSales = async (req, res, next) => {
   try {
-    let q = supabase.from("sale_items").select("product_id, quantity, line_total, products(name), sales!inner(created_at,status)").eq("sales.status", "completed");
+    const paymentMethod = String(req.query.payment_method || "").trim().toUpperCase();
+    let allowedSaleIds = null;
+    if (paymentMethod) {
+      let paymentsQuery = supabase
+        .from("payments")
+        .select("sale_id, sales!inner(status, created_at)")
+        .eq("sales.status", "completed")
+        .eq("method", paymentMethod);
+      if (req.query.from && req.query.to) {
+        paymentsQuery = inRange(paymentsQuery, req.query.from, req.query.to, "sales.created_at");
+      }
+      const { data: paymentRows, error: paymentError } = await paymentsQuery;
+      if (paymentError) throw fail(paymentError.message);
+      allowedSaleIds = [...new Set((paymentRows || []).map((row) => row.sale_id).filter(Boolean))];
+      if (!allowedSaleIds.length) return ok(res, []);
+    }
+
+    let q = supabase
+      .from("sale_items")
+      .select("sale_id, product_id, quantity, line_total, products(name), sales!inner(created_at,status)")
+      .eq("sales.status", "completed");
     if (req.query.from && req.query.to) q = inRange(q, req.query.from, req.query.to, "sales.created_at");
-    
+    if (allowedSaleIds) q = q.in("sale_id", allowedSaleIds);
+
     const { data, error } = await q;
     if (error) throw fail(error.message);
     

@@ -6,6 +6,39 @@ const { auditLogger } = require("../../utils/auditLogger");
 const { broadcastRealtime } = require("../../realtime");
 const { generateReceiptNumber, resolveItem, applyMovement, roundQty } = require("./service");
 
+const withFallbackSaleItemsFromMovements = async (salesRows) => {
+  const rows = Array.isArray(salesRows) ? salesRows : [];
+  const missing = rows
+    .filter((s) => !Array.isArray(s.sale_items) || s.sale_items.length === 0)
+    .map((s) => String(s.id));
+  if (!missing.length) return rows;
+
+  const { data: movementRows, error } = await supabase
+    .from("stock_movements")
+    .select("reference_id, product_id, quantity_change, products(name)")
+    .eq("movement_type", "sale")
+    .in("reference_id", missing);
+  if (error) return rows;
+
+  const bySale = new Map();
+  for (const mv of movementRows || []) {
+    const saleId = String(mv.reference_id || "");
+    if (!saleId) continue;
+    if (!bySale.has(saleId)) bySale.set(saleId, []);
+    bySale.get(saleId).push({
+      product_id: Number(mv.product_id),
+      quantity: Number(Math.abs(Number(mv.quantity_change || 0)).toFixed(3)),
+      products: mv.products || null,
+    });
+  }
+
+  return rows.map((sale) => {
+    if (Array.isArray(sale.sale_items) && sale.sale_items.length > 0) return sale;
+    const fallbackItems = bySale.get(String(sale.id)) || [];
+    return { ...sale, sale_items: fallbackItems };
+  });
+};
+
 const createSale = async (req, res, next) => {
   try {
     const { cashier_id, print_receipt, items, payments, discount_amount = 0 } = req.body;
@@ -182,7 +215,8 @@ const list = async (req, res, next) => {
 
     const { data, count, error } = result;
     if (error) throw fail(error.message);
-    return paginated(res, data, page, limit, count);
+    const enriched = await withFallbackSaleItemsFromMovements(data || []);
+    return paginated(res, enriched, page, limit, count);
   } catch (e) { next(e); }
 };
 

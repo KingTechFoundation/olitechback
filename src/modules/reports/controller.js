@@ -202,9 +202,60 @@ const productSales = async (req, res, next) => {
 
     const { data, error } = await q;
     if (error) throw fail(error.message);
-    
+    const rows = data || [];
+
+    // Fallback for legacy/orphaned sales with missing sale_items:
+    // derive product quantity from stock movements and estimate line total.
+    let scopedSalesQuery = supabase
+      .from("sales")
+      .select("id,total_amount,status,created_at")
+      .eq("status", "completed");
+    if (req.query.from && req.query.to) scopedSalesQuery = inRange(scopedSalesQuery, req.query.from, req.query.to);
+    if (allowedSaleIds) scopedSalesQuery = scopedSalesQuery.in("id", allowedSaleIds);
+    const { data: scopedSales, error: scopedSalesError } = await scopedSalesQuery;
+    if (scopedSalesError) throw fail(scopedSalesError.message);
+
+    const existingSaleIds = new Set(rows.map((r) => String(r.sale_id)));
+    const scoped = scopedSales || [];
+    const missingSaleIds = scoped.map((s) => String(s.id)).filter((id) => !existingSaleIds.has(id));
+    let fallbackRows = [];
+    if (missingSaleIds.length) {
+      const { data: movementRows, error: movementError } = await supabase
+        .from("stock_movements")
+        .select("reference_id, product_id, quantity_change, products(name, selling_price)")
+        .eq("movement_type", "sale")
+        .in("reference_id", missingSaleIds);
+      if (movementError) throw fail(movementError.message);
+
+      const saleTotalById = new Map(scoped.map((s) => [String(s.id), Number(s.total_amount || 0)]));
+      const movementCountBySale = new Map();
+      for (const mv of movementRows || []) {
+        const sid = String(mv.reference_id || "");
+        if (!sid) continue;
+        movementCountBySale.set(sid, Number(movementCountBySale.get(sid) || 0) + 1);
+      }
+
+      fallbackRows = (movementRows || []).map((mv) => {
+        const saleId = String(mv.reference_id || "");
+        const qty = Math.abs(Number(mv.quantity_change || 0));
+        const moveCount = Number(movementCountBySale.get(saleId) || 0);
+        const saleTotal = Number(saleTotalById.get(saleId) || 0);
+        const estimatedLineTotal =
+          moveCount === 1
+            ? saleTotal
+            : Number((qty * Number(mv.products?.selling_price || 0)).toFixed(2));
+        return {
+          sale_id: saleId,
+          product_id: Number(mv.product_id),
+          quantity: qty,
+          line_total: estimatedLineTotal,
+          products: { name: mv.products?.name || "Unknown" },
+        };
+      });
+    }
+
     const map = {};
-    (data || []).forEach((x) => {
+    [...rows, ...fallbackRows].forEach((x) => {
       const k = x.product_id;
       map[k] = map[k] || { product_id: k, product_name: x.products?.name || "Unknown", qty: 0, total: 0 };
       map[k].qty += Number(x.quantity);

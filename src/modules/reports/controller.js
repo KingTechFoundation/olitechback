@@ -8,25 +8,21 @@ const formatMoney = (v) => new Intl.NumberFormat("en-RW", { style: "currency", c
 
 /**
  * Revenue + receipt count for completed sales in a store-day range.
- * Uses sale_items → sales (same filter path as profit-loss) so totals stay consistent
- * with line-based reports; querying sales alone can return empty rows with some PostgREST filters.
+ * Uses `sales` as source of truth so totals remain correct even if a historical
+ * row has missing embedded line items.
  */
 const aggregateCompletedSalesInRange = async (from, to) => {
   let q = supabase
-    .from("sale_items")
-    .select("sale_id, sales!inner(id,total_amount,status,created_at)")
-    .eq("sales.status", "completed")
+    .from("sales")
+    .select("id,total_amount,status,created_at")
+    .eq("status", "completed")
     .limit(100000);
-  if (from && to) q = inRange(q, from, to, "sales.created_at");
+  if (from && to) q = inRange(q, from, to);
   const { data, error } = await q;
   if (error) throw fail(error.message);
-  const saleTotals = new Map();
-  for (const r of data || []) {
-    const sid = r.sale_id;
-    if (!saleTotals.has(sid)) saleTotals.set(sid, Number(r.sales?.total_amount || 0));
-  }
-  const revenue = [...saleTotals.values()].reduce((a, b) => a + b, 0);
-  return { revenue, transactions: saleTotals.size };
+  const rows = data || [];
+  const revenue = rows.reduce((a, s) => a + Number(s.total_amount || 0), 0);
+  return { revenue, transactions: rows.length };
 };
 
 const drawTable = (doc, title, headers, rows, startY) => {

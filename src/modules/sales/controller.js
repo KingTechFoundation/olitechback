@@ -90,9 +90,16 @@ const createSale = async (req, res, next) => {
       supabase.from("payments").insert(paymentsPayload),
       supabase.from("stock_movements").insert(stockMovementsPayload),
     ]);
-    if (saleItemsInsertRes.error) throw fail(saleItemsInsertRes.error.message);
-    if (paymentsInsertRes.error) throw fail(paymentsInsertRes.error.message);
-    if (stockMovementsInsertRes.error) throw fail(stockMovementsInsertRes.error.message);
+    if (saleItemsInsertRes.error || paymentsInsertRes.error || stockMovementsInsertRes.error) {
+      // Prevent orphaned completed sales without line items/payments.
+      await supabase.from("sales").delete().eq("id", sale.id);
+      const writeError =
+        saleItemsInsertRes.error?.message ||
+        paymentsInsertRes.error?.message ||
+        stockMovementsInsertRes.error?.message ||
+        "Failed to save sale details";
+      throw fail(writeError);
+    }
 
     const inventoryUpdatePromises = [...requiredByProductId.entries()].map(([productId, requiredQty]) => {
       const nextQty = Number(inventoryByProductId.get(productId) || 0) - Number(requiredQty);
@@ -155,7 +162,10 @@ const createSale = async (req, res, next) => {
 const list = async (req, res, next) => {
   try {
     const page = Number(req.query.page || 1), limit = Number(req.query.limit || 20), from = (page - 1) * limit;
-    let q = supabase.from("sales").select("*, sale_items:sale_items(products:products(name))", { count: "exact" }).order("created_at", { ascending: false });
+    let q = supabase
+      .from("sales")
+      .select("*, sale_items:sale_items(product_id, quantity, products:products(name))", { count: "exact" })
+      .order("created_at", { ascending: false });
     if (req.query.status)  q = q.eq("status", req.query.status);
     if (req.user.role === "cashier") q = q.eq("cashier_id", req.user.id);
     else if (req.query.cashier) q = q.eq("cashier_id", req.query.cashier);

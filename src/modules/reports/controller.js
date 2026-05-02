@@ -254,12 +254,38 @@ const productSales = async (req, res, next) => {
       });
     }
 
+    // 1. Fetch all payments for these sales to calculate attribution factors for split/over-payments
+    const { data: allPayments, error: paymentsErr } = await supabase
+      .from("payments")
+      .select("sale_id, method, amount")
+      .in("sale_id", [...new Set([...rows, ...fallbackRows].map(r => String(r.sale_id)))]);
+    if (paymentsErr) throw fail(paymentsErr.message);
+
+    const paymentInfoBySale = {};
+    (allPayments || []).forEach(p => {
+      const sid = String(p.sale_id);
+      paymentInfoBySale[sid] = paymentInfoBySale[sid] || { totalTendered: 0, methodAmount: 0 };
+      paymentInfoBySale[sid].totalTendered += Number(p.amount || 0);
+      if (p.method === paymentMethod) {
+        paymentInfoBySale[sid].methodAmount += Number(p.amount || 0);
+      }
+    });
+
     const map = {};
     [...rows, ...fallbackRows].forEach((x) => {
       const k = x.product_id;
+      const saleId = String(x.sale_id);
+      
+      // Calculate attribution factor: how much of this item was paid by the target method
+      let factor = 1;
+      if (paymentMethod && paymentInfoBySale[saleId]) {
+        const info = paymentInfoBySale[saleId];
+        factor = info.totalTendered > 0 ? info.methodAmount / info.totalTendered : 0;
+      }
+
       map[k] = map[k] || { product_id: k, product_name: x.products?.name || "Unknown", qty: 0, total: 0 };
       map[k].qty += Number(x.quantity);
-      map[k].total += Number(x.line_total);
+      map[k].total += Number(x.line_total) * factor;
     });
 
     const out = Object.values(map).sort((a, b) => req.query.sort === "worst" ? a.total - b.total : b.total - a.total);
@@ -374,16 +400,32 @@ const profitLoss = async (req, res, next) => {
 };
 const paymentMethods = async (req, res, next) => {
   try {
-    let q = supabase.from("payments").select("method, amount, sales!inner(status, created_at)").eq("sales.status", "completed");
+    let q = supabase.from("payments").select("method, amount, sale_id, sales!inner(total_amount, status, created_at)").eq("sales.status", "completed");
     if (req.query.from && req.query.to) q = inRange(q, req.query.from, req.query.to, "sales.created_at");
     
     const { data, error } = await q;
     if (error) throw fail(error.message);
 
-    const out = data.reduce((a, p) => ({ 
-      ...a, 
-      [p.method]: Number(a[p.method] || 0) + Number(p.amount) 
-    }), { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 });
+    const paymentsBySale = {};
+    (data || []).forEach((p) => {
+      const sid = p.sale_id;
+      if (!paymentsBySale[sid]) {
+        paymentsBySale[sid] = { total_amount: Number(p.sales?.total_amount || 0), rows: [] };
+      }
+      paymentsBySale[sid].rows.push(p);
+    });
+
+    const out = { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 };
+    Object.values(paymentsBySale).forEach((sale) => {
+      const totalToDistribute = sale.total_amount;
+      const tenderedTotal = sale.rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+      if (tenderedTotal <= 0) return;
+      const factor = totalToDistribute / tenderedTotal;
+      sale.rows.forEach((r) => {
+        const captured = Number(r.amount || 0) * factor;
+        out[r.method] = (out[r.method] || 0) + captured;
+      });
+    });
 
     return ok(res, out);
   } catch (e) { next(e); }
@@ -415,10 +457,10 @@ const dashboardSummary = async (req, res, next) => {
     const date = req.query.date;
     const from = req.query.from || date;
     const to = req.query.to || date;
-    const [salesAgg, payRowsRes, profitRowsRes, expenseRowsRes, stockRowsRes, lowStockRes] = await Promise.all([
+    const [salesAgg, payRowsRes, profitRowsRes, expenseRowsRes, stockRowsRes] = await Promise.all([
       from && to ? aggregateCompletedSalesInRange(from, to) : aggregateCompletedSalesInRange(null, null),
       (() => {
-        let q = supabase.from("payments").select("method, amount, sales!inner(status, created_at)").eq("sales.status", "completed");
+        let q = supabase.from("payments").select("method, amount, sale_id, sales!inner(total_amount, status, created_at)").eq("sales.status", "completed");
         if (from && to) q = inRange(q, from, to, "sales.created_at");
         return q;
       })(),
@@ -445,10 +487,30 @@ const dashboardSummary = async (req, res, next) => {
     if (expenseRowsRes.error) throw fail(expenseRowsRes.error.message);
     if (stockRowsRes.error) throw fail(stockRowsRes.error.message);
 
-    const paymentData = (payRowsRes.data || []).reduce(
-      (acc, p) => ({ ...acc, [p.method]: Number(acc[p.method] || 0) + Number(p.amount || 0) }),
-      { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 }
-    );
+    const paymentsBySale = {};
+    (payRowsRes.data || []).forEach((p) => {
+      const sid = p.sale_id;
+      if (!paymentsBySale[sid]) {
+        paymentsBySale[sid] = {
+          total_amount: Number(p.sales?.total_amount || 0),
+          rows: [],
+        };
+      }
+      paymentsBySale[sid].rows.push(p);
+    });
+
+    const paymentData = { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 };
+    Object.values(paymentsBySale).forEach((sale) => {
+      const totalToDistribute = sale.total_amount;
+      const tenderedTotal = sale.rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+      if (tenderedTotal <= 0) return;
+      const factor = totalToDistribute / tenderedTotal;
+      sale.rows.forEach((r) => {
+        const captured = Number(r.amount || 0) * factor;
+        paymentData[r.method] = (paymentData[r.method] || 0) + captured;
+      });
+    });
+
     const profitRows = profitRowsRes.data || [];
     const revenue = profitRows.reduce((a, i) => a + Number(i.line_total), 0);
     const cost = profitRows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0);

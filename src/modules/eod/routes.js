@@ -5,6 +5,14 @@ const { validate } = require("../../utils/http");
 const c = require("./controller");
 const r = express.Router();
 
+r.post("/opening-balance", allowRoles("cashier"), [body("cashier_id").isUUID(), body("date").isDate(), body("amount").isFloat({ min: 0 })], (req, res, next) => {
+  try {
+    validate(req);
+  } catch (e) {
+    return next(e);
+  }
+  c.setOpeningBalance(req, res, next);
+});
 r.post("/submit", allowRoles("cashier"), [body("cashier_id").isUUID(), body("date").isDate(), body("counted_cash").isFloat({ min: 0 })], (req, res, next) => {
   try {
     validate(req);

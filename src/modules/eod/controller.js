@@ -3,6 +3,16 @@ const { ok, paginated, fail } = require("../../utils/http");
 const { dayStartIso, dayEndIso } = require("../../utils/storeDayRange");
 
 const expectedCashFor = async (cashier_id, date) => {
+  // 1. Get opening balance from today's session if it exists
+  const { data: session } = await supabase
+    .from("eod_sessions")
+    .select("opening_balance")
+    .eq("cashier_id", cashier_id)
+    .eq("date", date)
+    .maybeSingle();
+  const openingBalance = Number(session?.opening_balance || 0);
+
+  // 2. Get cash sales
   const { data: cash, error: cashErr } = await supabase
     .from("payments")
     .select("amount, sales!inner(cashier_id, created_at, status)")
@@ -12,7 +22,27 @@ const expectedCashFor = async (cashier_id, date) => {
     .gte("sales.created_at", dayStartIso(date))
     .lte("sales.created_at", dayEndIso(date));
   if (cashErr) throw fail(cashErr.message);
-  return (cash || []).reduce((a, p) => a + Number(p.amount), 0);
+
+  const salesCash = (cash || []).reduce((a, p) => a + Number(p.amount), 0);
+  return openingBalance + salesCash;
+};
+
+const setOpeningBalance = async (req, res, next) => {
+  try {
+    const { cashier_id, date, amount } = req.body;
+    const { data, error } = await supabase
+      .from("eod_sessions")
+      .upsert(
+        { cashier_id, date, opening_balance: Number(amount || 0), expected_cash: 0, counted_cash: 0 },
+        { onConflict: "cashier_id,date" }
+      )
+      .select()
+      .single();
+    if (error) throw fail(error.message);
+    return ok(res, data);
+  } catch (e) {
+    next(e);
+  }
 };
 
 const submit = async (req, res, next) => {
@@ -20,15 +50,6 @@ const submit = async (req, res, next) => {
     const { cashier_id, date, counted_cash, notes: bodyNotes } = req.body;
     const userNotes = typeof bodyNotes === "string" ? bodyNotes.trim() : "";
 
-    const { data: existing, error: existingErr } = await supabase
-      .from("eod_sessions")
-      .select("id")
-      .eq("cashier_id", cashier_id)
-      .eq("date", date)
-      .maybeSingle();
-    if (existingErr) throw fail(existingErr.message);
-    if (existing) throw fail("You already submitted EOD for this business date.", 409);
-    
     const expected_cash = await expectedCashFor(cashier_id, date);
     const discrepancy = Number(counted_cash) - expected_cash;
     
@@ -45,20 +66,26 @@ const submit = async (req, res, next) => {
 
     const { data, error } = await supabase
       .from("eod_sessions")
-      .insert([{ 
-        cashier_id, 
-        date, 
-        counted_cash, 
-        expected_cash, 
-        status,
-        notes 
-      }])
+      .upsert(
+        { 
+          cashier_id, 
+          date, 
+          counted_cash, 
+          expected_cash, 
+          status,
+          notes,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: "cashier_id,date" }
+      )
       .select()
       .single();
 
     if (error) throw fail(error.message);
     return ok(res, data);
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 };
 const preview = async (req, res, next) => {
   try {
@@ -175,4 +202,4 @@ const remove = async (req, res, next) => {
   }
 };
 
-module.exports = { submit, preview, list, getOne, approve, flag, report, remove };
+module.exports = { submit, preview, list, getOne, approve, flag, report, remove, setOpeningBalance };

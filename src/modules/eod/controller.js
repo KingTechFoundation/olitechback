@@ -70,6 +70,14 @@ const submit = async (req, res, next) => {
     const { cashier_id, date, counted_cash, notes: bodyNotes } = req.body;
     const userNotes = typeof bodyNotes === "string" ? bodyNotes.trim() : "";
 
+    // Get cashier name for the notification
+    const { data: cashierProfile } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", cashier_id)
+      .single();
+    const cashierName = cashierProfile?.full_name || "Unknown Cashier";
+
     const { expected_cash } = await expectedCashFor(cashier_id, date);
     const discrepancy = Number(counted_cash) - expected_cash;
     
@@ -103,6 +111,32 @@ const submit = async (req, res, next) => {
       .single();
 
     if (error) throw fail(error.message);
+
+    // Create a notification for the owner
+    const absDiscrepancy = Math.abs(discrepancy);
+    let severity = "info";
+    let statusText = "Balanced";
+    
+    if (discrepancy < 0) {
+      statusText = `Shortage of ${absDiscrepancy.toLocaleString()} RWF`;
+      severity = absDiscrepancy >= 2000 ? "critical" : "warning";
+    } else if (discrepancy > 0) {
+      statusText = `Excess of ${discrepancy.toLocaleString()} RWF`;
+      severity = "warning";
+    }
+
+    await supabase.from("payment_notifications").insert({
+      title: `EOD Settlement: ${cashierName}`,
+      body: `Shift settlement for ${date}: ${statusText}.`,
+      severity,
+      created_by: cashier_id,
+      is_cleared: false
+    });
+
+    const { broadcastRealtime } = require("../../realtime");
+    broadcastRealtime({ type: "payment_notifs_updated", event: "created" });
+    broadcastRealtime({ type: "dashboard_refresh" });
+
     return ok(res, data);
   } catch (e) {
     next(e);

@@ -5,17 +5,16 @@ const { validate } = require("../../utils/http");
 const c = require("./controller");
 
 const r = express.Router();
-r.use(allowRoles("owner"));
-
-r.get("/", c.list);
+r.get("/", allowRoles("owner", "cashier", "developer"), c.list);
 r.post(
   "/",
+  allowRoles("owner", "cashier", "developer"),
   [body("description").notEmpty(), body("amount").isFloat({ gt: 0 }), body("category").optional().notEmpty(), body("expense_date").optional().isISO8601()],
   (req, res, next) => {
     try { validate(req); } catch (e) { return next(e); }
     c.create(req, res, next);
   }
 );
-r.delete("/:id", c.remove);
+r.delete("/:id", allowRoles("owner"), c.remove);
 
 module.exports = r;

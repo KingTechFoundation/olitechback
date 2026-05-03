@@ -293,7 +293,7 @@ const performanceReport = async (req, res, next) => {
 
 const remove = async (req, res, next) => {
   try {
-    const { data, error } = await supabase.from("eod_sessions").delete().eq("id", req.params.id).select("*, profiles(full_name)").single();
+    const { data, error } = await supabase.from("eod_sessions").delete().eq("id", req.params.id).select("*, profiles!eod_sessions_cashier_id_fkey(full_name)").single();
     if (error) throw fail(error.message);
 
     // Also delete associated notifications

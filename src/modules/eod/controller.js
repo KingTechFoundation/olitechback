@@ -46,7 +46,14 @@ const setOpeningBalance = async (req, res, next) => {
     const { data, error } = await supabase
       .from("eod_sessions")
       .upsert(
-        { cashier_id, date, opening_balance: Number(amount || 0), expected_cash: 0, counted_cash: 0 },
+        { 
+          cashier_id, 
+          date, 
+          opening_balance: Number(amount || 0), 
+          expected_cash: 0, 
+          counted_cash: 0,
+          notes: "OPENING_BALANCE_ONLY"
+        },
         { onConflict: "cashier_id,date" }
       )
       .select()
@@ -113,7 +120,10 @@ const preview = async (req, res, next) => {
       .eq("date", date)
       .maybeSingle();
     if (existingErr) throw fail(existingErr.message);
-    return ok(res, { ...totals, already_submitted: Boolean(existing), existing });
+    
+    const isSubmitted = existing && existing.notes !== "OPENING_BALANCE_ONLY";
+    
+    return ok(res, { ...totals, already_submitted: isSubmitted, existing });
   } catch (e) {
     next(e);
   }

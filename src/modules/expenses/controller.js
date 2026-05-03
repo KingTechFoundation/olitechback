@@ -34,6 +34,7 @@ const create = async (req, res, next) => {
       amount: Number(req.body.amount),
       expense_date: req.body.expense_date || new Date().toISOString().slice(0, 10),
       created_by: req.user.id,
+      payment_method: String(req.body.payment_method || "CASH").toUpperCase(),
     };
     const { data, error } = await supabase.from("expenses").insert([payload]).select().single();
     if (error) throw fail(error.message);

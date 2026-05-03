@@ -10,7 +10,7 @@ const expectedCashFor = async (cashier_id, date) => {
     .eq("cashier_id", cashier_id)
     .eq("date", date)
     .maybeSingle();
-  const openingBalance = Number(session?.opening_balance || 0);
+  const opening_balance = Number(session?.opening_balance || 0);
 
   // 2. Get cash sales
   const { data: cash, error: cashErr } = await supabase
@@ -23,8 +23,21 @@ const expectedCashFor = async (cashier_id, date) => {
     .lte("sales.created_at", dayEndIso(date));
   if (cashErr) throw fail(cashErr.message);
 
-  const salesCash = (cash || []).reduce((a, p) => a + Number(p.amount), 0);
-  return openingBalance + salesCash;
+  const cash_sales = (cash || []).reduce((a, p) => a + Number(p.amount), 0);
+
+  // 3. Get cash expenses
+  const { data: expenses, error: expErr } = await supabase
+    .from("expenses")
+    .select("amount")
+    .eq("created_by", cashier_id)
+    .eq("payment_method", "CASH")
+    .eq("expense_date", date);
+  if (expErr) throw fail(expErr.message);
+  const cash_expenses = (expenses || []).reduce((a, e) => a + Number(e.amount), 0);
+
+  const expected_cash = opening_balance + cash_sales - cash_expenses;
+  
+  return { expected_cash, opening_balance, cash_sales, cash_expenses };
 };
 
 const setOpeningBalance = async (req, res, next) => {
@@ -50,7 +63,7 @@ const submit = async (req, res, next) => {
     const { cashier_id, date, counted_cash, notes: bodyNotes } = req.body;
     const userNotes = typeof bodyNotes === "string" ? bodyNotes.trim() : "";
 
-    const expected_cash = await expectedCashFor(cashier_id, date);
+    const { expected_cash } = await expectedCashFor(cashier_id, date);
     const discrepancy = Number(counted_cash) - expected_cash;
     
     // Combine auto-generated notes with user justification
@@ -92,15 +105,15 @@ const preview = async (req, res, next) => {
     const cashier_id = req.query.cashier_id;
     const date = req.query.date;
     if (!cashier_id || !date) throw fail("cashier_id and date are required");
-    const expected_cash = await expectedCashFor(cashier_id, date);
+    const totals = await expectedCashFor(cashier_id, date);
     const { data: existing, error: existingErr } = await supabase
       .from("eod_sessions")
-      .select("id, counted_cash, discrepancy, status, created_at")
+      .select("id, counted_cash, status, created_at")
       .eq("cashier_id", cashier_id)
       .eq("date", date)
       .maybeSingle();
     if (existingErr) throw fail(existingErr.message);
-    return ok(res, { expected_cash, already_submitted: Boolean(existing), existing });
+    return ok(res, { ...totals, already_submitted: Boolean(existing), existing });
   } catch (e) {
     next(e);
   }
@@ -130,7 +143,15 @@ const getOne = async (req, res, next) => {
       .eq("id", req.params.id)
       .single();
     if (error) throw fail(error.message, 404);
-    return ok(res, { ...data, cashier_name: data?.profiles?.full_name || null });
+
+    // Get breakdown for this session
+    const breakdown = await expectedCashFor(data.cashier_id, data.date);
+
+    return ok(res, { 
+      ...data, 
+      ...breakdown,
+      cashier_name: data?.profiles?.full_name || null 
+    });
   } catch (e) {
     next(e);
   }

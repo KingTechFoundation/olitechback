@@ -23,8 +23,7 @@ r.post("/submit", allowRoles("cashier"), [body("cashier_id").isUUID(), body("dat
 });
 r.get("/preview", allowRoles("cashier", "owner"), c.preview);
 r.get("/", allowRoles("owner"), c.list);
-r.get("/report/:date", allowRoles("owner"), c.report);
-
+r.get("/performance", allowRoles("owner"), c.performanceReport);
 r.get("/:id", allowRoles("owner"), c.getOne);
 r.delete("/:id", allowRoles("owner"), c.remove);
 r.patch("/:id/approve", allowRoles("owner"), c.approve);

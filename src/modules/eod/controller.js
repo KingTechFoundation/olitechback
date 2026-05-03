@@ -255,14 +255,37 @@ const flag = async (req, res, next) => {
     next(e);
   }
 };
-const report = async (req, res, next) => {
+const performanceReport = async (req, res, next) => {
   try {
+    const { from, to } = req.query;
+    if (!from || !to) throw fail("Date range (from, to) is required");
+
     const { data, error } = await supabase
       .from("eod_sessions")
       .select("*, profiles!eod_sessions_cashier_id_fkey(full_name)")
-      .eq("date", req.params.date);
+      .gte("date", from)
+      .lte("date", to)
+      .order("date", { ascending: false });
+
     if (error) throw fail(error.message);
-    return ok(res, data);
+
+    // Map data to include status and discrepancy calculations
+    const report = data.map(d => {
+      const diff = Number(d.counted_cash) - Number(d.expected_cash);
+      let status = "PERFECT";
+      if (diff < 0) status = "SHORTAGE";
+      else if (diff > 0) status = "EXCESS";
+
+      return {
+        ...d,
+        cashier_name: d.profiles?.full_name || "Unknown",
+        discrepancy: diff,
+        performance_status: status,
+        is_balanced: diff === 0
+      };
+    });
+
+    return ok(res, report);
   } catch (e) {
     next(e);
   }
@@ -298,7 +321,7 @@ module.exports = {
   getOne, 
   approve, 
   flag, 
-  report, 
+  performanceReport, 
   remove,
   expectedCashFor
 };

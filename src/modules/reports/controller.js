@@ -21,7 +21,7 @@ const aggregateCompletedSalesInRange = async (from, to) => {
   const { data, error } = await q;
   if (error) throw fail(error.message);
   const rows = data || [];
-  const revenue = rows.reduce((a, s) => a + Number(s.total_amount || 0), 0);
+  const revenue = Math.round(rows.reduce((a, s) => a + Number(s.total_amount || 0), 0));
   return { revenue, transactions: rows.length };
 };
 
@@ -67,7 +67,7 @@ const exportFullReportPdf = async (req, res, date) => {
     ]);
 
     const revenue = saleAgg.revenue;
-    const cost = (qProfit.data || []).reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0);
+    const cost = Math.round((qProfit.data || []).reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0));
     const profit = revenue - cost;
 
     const productsMap = {};
@@ -285,7 +285,7 @@ const productSales = async (req, res, next) => {
 
       map[k] = map[k] || { product_id: k, product_name: x.products?.name || "Unknown", qty: 0, total: 0 };
       map[k].qty += Number(x.quantity);
-      map[k].total += Number(x.line_total) * factor;
+      map[k].total += Math.round(Number(x.line_total) * factor);
     });
 
     const out = Object.values(map).sort((a, b) => req.query.sort === "worst" ? a.total - b.total : b.total - a.total);
@@ -317,7 +317,7 @@ const stock = async (req, res, next) => {
     const products = rows.map((p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
       const unitCost = stockUnitCost(p);
-      const value = qty * unitCost;
+      const value = Math.round(qty * unitCost);
       totalStockValue += value;
 
       return {
@@ -391,7 +391,7 @@ const profitLoss = async (req, res, next) => {
     if (error) throw fail(error.message);
     const rows = data || [];
     const revenue = rows.reduce((a, i) => a + Number(i.line_total), 0);
-    const cost = rows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0);
+    const cost = Math.round(rows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0));
     const out = { revenue, cost_of_goods: cost, profit: revenue - cost };
     return ok(res, out);
   } catch (e) {
@@ -422,7 +422,7 @@ const paymentMethods = async (req, res, next) => {
       if (tenderedTotal <= 0) return;
       const factor = totalToDistribute / tenderedTotal;
       sale.rows.forEach((r) => {
-        const captured = Number(r.amount || 0) * factor;
+        const captured = Math.round(Number(r.amount || 0) * factor);
         out[r.method] = (out[r.method] || 0) + captured;
       });
     });
@@ -506,14 +506,14 @@ const dashboardSummary = async (req, res, next) => {
       if (tenderedTotal <= 0) return;
       const factor = totalToDistribute / tenderedTotal;
       sale.rows.forEach((r) => {
-        const captured = Number(r.amount || 0) * factor;
+        const captured = Math.round(Number(r.amount || 0) * factor);
         paymentData[r.method] = (paymentData[r.method] || 0) + captured;
       });
     });
 
     const profitRows = profitRowsRes.data || [];
-    const revenue = profitRows.reduce((a, i) => a + Number(i.line_total), 0);
-    const cost = profitRows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0);
+    const revenue = Math.round(profitRows.reduce((a, i) => a + Number(i.line_total), 0));
+    const cost = Math.round(profitRows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0));
     const profitData = { revenue, cost_of_goods: cost, profit: revenue - cost };
     const expenseRows = expenseRowsRes.data || [];
     const expenseData = {
@@ -521,11 +521,11 @@ const dashboardSummary = async (req, res, next) => {
       count: expenseRows.length,
     };
     const stockRows = stockRowsRes.data || [];
-    const totalStockValue = stockRows.reduce((acc, p) => {
+    const totalStockValue = Math.round(stockRows.reduce((acc, p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
       const unitCost = stockUnitCost(p);
       return acc + qty * unitCost;
-    }, 0);
+    }, 0));
     const { data: s } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
     const defaultThreshold = Number(s?.default_low_stock_threshold ?? 10);
     

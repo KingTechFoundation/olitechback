@@ -64,7 +64,7 @@ const createSale = async (req, res, next) => {
       if (Number(item.quantity) <= 0) throw fail("quantity in sale_items must be > 0");
 
       const resolved = resolveItem(product, item.sold_as, item.quantity);
-      const line_total = Number((resolved.unit_price * Number(resolved.quantity)).toFixed(2));
+      const line_total = Math.round(resolved.unit_price * Number(resolved.quantity));
       gross += line_total;
 
       const currentRequired = requiredByProductId.get(productId) || 0;

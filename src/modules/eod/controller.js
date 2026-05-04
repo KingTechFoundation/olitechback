@@ -181,6 +181,7 @@ const list = async (req, res, next) => {
     const { data, count, error } = await supabase
       .from("eod_sessions")
       .select("*, profiles!eod_sessions_cashier_id_fkey(full_name)", { count: "exact" })
+      .not("submitted_at", "is", null)
       .order("date", { ascending: false })
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);

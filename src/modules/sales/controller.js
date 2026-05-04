@@ -5,6 +5,7 @@ const { buildReceipt } = require("../../utils/receiptGenerator");
 const { auditLogger } = require("../../utils/auditLogger");
 const { broadcastRealtime } = require("../../realtime");
 const { generateReceiptNumber, resolveItem, applyMovement, roundQty } = require("./service");
+const { attributePayments } = require("../../utils/paymentUtils");
 
 const withFallbackSaleItemsFromMovements = async (salesRows) => {
   const rows = Array.isArray(salesRows) ? salesRows : [];
@@ -228,7 +229,11 @@ const getOne = async (req, res, next) => {
       return res.status(403).json({ success: false, error: "Forbidden: you can only view your own sales", code: 403 });
     }
     const { data: items }    = await supabase.from("sale_items").select("*, products(name)").eq("sale_id", req.params.id);
-    const { data: payments } = await supabase.from("payments").select("*").eq("sale_id", req.params.id);
+    const { data: paymentsRaw } = await supabase.from("payments").select("*").eq("sale_id", req.params.id);
+    const payments = attributePayments(Number(sale.total_amount), paymentsRaw || []).map(p => ({
+      ...p,
+      amount: p.captured
+    }));
     return ok(res, { sale, items, payments });
   } catch (e) { next(e); }
 };

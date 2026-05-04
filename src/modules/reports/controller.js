@@ -3,6 +3,7 @@ const { supabase } = require("../../config/supabase");
 const { ok, fail } = require("../../utils/http");
 const { quantityFromInventoryEmbed } = require("../../utils/inventoryEmbed");
 const { inStoreDayRange: inRange } = require("../../utils/storeDayRange");
+const { attributePayments } = require("../../utils/paymentUtils");
 
 const formatMoney = (v) => new Intl.NumberFormat("en-RW", { style: "currency", currency: "RWF" }).format(v || 0);
 
@@ -227,7 +228,7 @@ const productSales = async (req, res, next) => {
         .in("reference_id", missingSaleIds);
       if (movementError) throw fail(movementError.message);
 
-      const saleTotalById = new Map(scoped.map((s) => [String(s.id), Number(s.total_amount || 0)]));
+
       const movementCountBySale = new Map();
       for (const mv of movementRows || []) {
         const sid = String(mv.reference_id || "");
@@ -261,14 +262,15 @@ const productSales = async (req, res, next) => {
       .in("sale_id", [...new Set([...rows, ...fallbackRows].map(r => String(r.sale_id)))]);
     if (paymentsErr) throw fail(paymentsErr.message);
 
+    const saleTotalById = new Map(scoped.map((s) => [String(s.id), Number(s.total_amount || 0)]));
     const paymentInfoBySale = {};
     (allPayments || []).forEach(p => {
       const sid = String(p.sale_id);
-      paymentInfoBySale[sid] = paymentInfoBySale[sid] || { totalTendered: 0, methodAmount: 0 };
-      paymentInfoBySale[sid].totalTendered += Number(p.amount || 0);
-      if (p.method === paymentMethod) {
-        paymentInfoBySale[sid].methodAmount += Number(p.amount || 0);
-      }
+      paymentInfoBySale[sid] = paymentInfoBySale[sid] || { 
+        saleTotal: saleTotalById.get(sid) || 0,
+        rawPayments: []
+      };
+      paymentInfoBySale[sid].rawPayments.push(p);
     });
 
     const map = {};
@@ -280,7 +282,13 @@ const productSales = async (req, res, next) => {
       let factor = 1;
       if (paymentMethod && paymentInfoBySale[saleId]) {
         const info = paymentInfoBySale[saleId];
-        factor = info.totalTendered > 0 ? info.methodAmount / info.totalTendered : 0;
+        // Use the new attribution logic to find the captured amount for the specific method
+        const attributed = attributePayments(info.saleTotal, info.rawPayments);
+        const methodCaptured = attributed
+          .filter(p => p.method === paymentMethod)
+          .reduce((a, p) => a + p.captured, 0);
+          
+        factor = info.saleTotal > 0 ? methodCaptured / info.saleTotal : 0;
       }
 
       map[k] = map[k] || { product_id: k, product_name: x.products?.name || "Unknown", qty: 0, total: 0 };
@@ -417,13 +425,9 @@ const paymentMethods = async (req, res, next) => {
 
     const out = { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 };
     Object.values(paymentsBySale).forEach((sale) => {
-      const totalToDistribute = sale.total_amount;
-      const tenderedTotal = sale.rows.reduce((a, r) => a + Number(r.amount || 0), 0);
-      if (tenderedTotal <= 0) return;
-      const factor = totalToDistribute / tenderedTotal;
-      sale.rows.forEach((r) => {
-        const captured = Math.round(Number(r.amount || 0) * factor);
-        out[r.method] = (out[r.method] || 0) + captured;
+      const attributed = attributePayments(sale.total_amount, sale.rows);
+      attributed.forEach((p) => {
+        out[p.method] = (out[p.method] || 0) + p.captured;
       });
     });
 
@@ -501,13 +505,9 @@ const dashboardSummary = async (req, res, next) => {
 
     const paymentData = { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 };
     Object.values(paymentsBySale).forEach((sale) => {
-      const totalToDistribute = sale.total_amount;
-      const tenderedTotal = sale.rows.reduce((a, r) => a + Number(r.amount || 0), 0);
-      if (tenderedTotal <= 0) return;
-      const factor = totalToDistribute / tenderedTotal;
-      sale.rows.forEach((r) => {
-        const captured = Math.round(Number(r.amount || 0) * factor);
-        paymentData[r.method] = (paymentData[r.method] || 0) + captured;
+      const attributed = attributePayments(sale.total_amount, sale.rows);
+      attributed.forEach((p) => {
+        paymentData[p.method] = (paymentData[p.method] || 0) + p.captured;
       });
     });
 

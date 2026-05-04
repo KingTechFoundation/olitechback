@@ -129,6 +129,31 @@ const exportFullReportPdf = async (req, res, date) => {
     doc.end();
 };
 
+const exportProductSalesReportPdf = async (req, res, results, { from, to, paymentMethod }) => {
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => res.type("application/pdf").send(Buffer.concat(chunks)));
+
+    const title = paymentMethod ? `PRODUCT SALES - ${paymentMethod}` : "PRODUCT SALES";
+    const dateRange = from === to ? from : `${from} to ${to}`;
+
+    doc.rect(0, 0, 612, 80).fill("#111827");
+    doc.fillColor("#00E676").fontSize(18).font("Helvetica-Bold").text(title, 50, 30);
+    doc.fillColor("#94A3B8").fontSize(9).font("Helvetica").text(`REPORT PERIOD: ${dateRange}`, 50, 55);
+
+    let y = 110;
+    
+    y = drawTable(doc, "SALES BREAKDOWN BY PRODUCT", [
+        { label: "PRODUCT NAME", key: "product_name", x: 50, w: 280 },
+        { label: "QTY SOLD", key: (r) => Number(r.qty || 0).toLocaleString(), x: 330, w: 80 },
+        { label: "TOTAL REVENUE", key: (r) => formatMoney(r.total), x: 410, w: 150 }
+    ], results, y);
+
+    doc.fontSize(8).fillColor("#94A3B8").text(`Generated on ${new Date().toLocaleString()}`, 50, 750, { align: "center", width: 500 });
+    doc.end();
+};
+
 const dailySales = async (req, res, next) => {
     try {
         const from = req.query.from;
@@ -297,6 +322,15 @@ const productSales = async (req, res, next) => {
     });
 
     const out = Object.values(map).sort((a, b) => req.query.sort === "worst" ? a.total - b.total : b.total - a.total);
+
+    if (req.query.export === "pdf") {
+      return exportProductSalesReportPdf(req, res, out, { 
+        from: req.query.from, 
+        to: req.query.to, 
+        paymentMethod 
+      });
+    }
+
     return ok(res, out);
   } catch (e) { next(e); }
 };

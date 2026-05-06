@@ -66,7 +66,7 @@ const block = async (req, res, next) => {
     if (error) throw fail(error.message);
 
     // Force sign out in Supabase Auth
-    await supabase.auth.admin.signOut(id);
+    await supabase.rpc('delete_user_sessions', { target_user_id: id });
 
     // Add to audit logs
     await supabase.from("account_audit_logs").insert({
@@ -116,8 +116,9 @@ const forceLogout = async (req, res, next) => {
     const { id } = req.params;
     if (id === req.user.id) throw fail("You cannot force logout yourself.", 400);
 
-    // Call Supabase admin sign out
-    const { error: signOutErr } = await supabase.auth.admin.signOut(id);
+    // Force sign out in Supabase Auth by deleting all sessions
+    const { error: signOutErr } = await supabase.rpc('delete_user_sessions', { target_user_id: id });
+    
     if (signOutErr) {
       console.error(`[Admin] Force logout failed for user ${id}:`, signOutErr);
       throw fail(signOutErr.message);

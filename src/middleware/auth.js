@@ -13,34 +13,30 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({ success: false, error: "Unauthorized", code: 401 });
     }
 
-    // 1. Check local cache first
+    // 1. Check local cache for basic auth (userData)
+    let userData = null;
     const cached = sessionCache.get(token);
+    
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      req.user = cached.user;
-      return next();
-    }
-
-    // 2. Not in cache or expired -> Verify with Supabase
-    // This is the part that was timing out due to network latency
-    const { data: userData, error: userErr } = await supabase.auth.getUser(token);
-    if (userErr || !userData?.user) {
-      console.error(`[Auth] Token validation failed for ${token.substring(0, 10)}...:`, userErr?.message);
-      
-      // If we have an expired cache but Supabase is timed out/down, 
-      // we might want to "gracefully" let them continue for a bit longer
-      // But for security, we'll follow standard protocol unless it's a timeout
-      if (userErr?.message?.includes("timeout") && cached) {
-         req.user = cached.user;
-         return next();
+      userData = cached.userData;
+    } else {
+      // 2. Not in cache or expired -> Verify with Supabase Auth
+      const { data: authData, error: userErr } = await supabase.auth.getUser(token);
+      if (userErr || !authData?.user) {
+        console.error(`[Auth] Token validation failed:`, userErr?.message);
+        return res.status(401).json({ success: false, error: "Invalid token", code: 401 });
       }
-      return res.status(401).json({ success: false, error: "Invalid token", code: 401 });
+      userData = authData.user;
+      // Update cache for Auth part only
+      sessionCache.set(token, { userData, timestamp: Date.now() });
     }
 
-    // 3. Fetch/Verify profile
+    // 3. ALWAYS fetch profile from DB in real-time to check for 'is_blocked'
+    // This ensures immediate enforcement when a developer blocks a user
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("id, full_name, role, is_active, is_blocked")
-      .eq("id", userData.user.id)
+      .eq("id", userData.id)
       .single();
 
     if (profileErr || !profile || !profile.is_active) {
@@ -48,6 +44,8 @@ const authMiddleware = async (req, res, next) => {
     }
 
     if (profile.is_blocked) {
+      // Clear cache for this token to prevent any bypass
+      sessionCache.delete(token);
       return res.status(403).json({ success: false, error: "Contact OlitechHub admin for Assistance", code: 403, blocked: true });
     }
 
@@ -55,16 +53,16 @@ const authMiddleware = async (req, res, next) => {
     supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", profile.id).then(()=>{});
 
     const userPayload = {
-      id: userData.user.id,
-      email: userData.user.email,
-      username: userData.user.user_metadata?.username || userData.user.email,
+      id: userData.id,
+      email: userData.email,
+      username: userData.user_metadata?.username || userData.email,
       role: profile.role,
       full_name: profile.full_name,
       token,
     };
 
-    // 4. Update cache
-    sessionCache.set(token, { user: userPayload, timestamp: Date.now() });
+    // 4. Update cache with just the core Auth data (already done above, but let's keep it consistent)
+    sessionCache.set(token, { userData, timestamp: Date.now() });
     
     // Periodically clean up old cache entries
     if (sessionCache.size > 1000) {

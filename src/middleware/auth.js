@@ -31,11 +31,10 @@ const authMiddleware = async (req, res, next) => {
       sessionCache.set(token, { userData, timestamp: Date.now() });
     }
 
-    // 3. ALWAYS fetch profile from DB in real-time to check for 'is_blocked'
-    // This ensures immediate enforcement when a developer blocks a user
+    // 3. ALWAYS fetch profile from DB in real-time
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
-      .select("id, full_name, role, is_active, is_blocked")
+      .select("id, full_name, role, is_active, is_blocked, force_logout_at")
       .eq("id", userData.id)
       .single();
 
@@ -43,10 +42,29 @@ const authMiddleware = async (req, res, next) => {
       return res.status(403).json({ success: false, error: "User inactive or missing profile", code: 403 });
     }
 
+    // 4. Check for Blocked status
     if (profile.is_blocked) {
-      // Clear cache for this token to prevent any bypass
       sessionCache.delete(token);
       return res.status(403).json({ success: false, error: "Contact OlitechHub admin for Assistance", code: 403, blocked: true });
+    }
+
+    // 5. Check for Force Logout (Token Revocation)
+    if (profile.force_logout_at) {
+      try {
+        // Decode JWT payload manually to get 'iat' (issued at)
+        const payloadBase64 = token.split('.')[1];
+        const payload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString());
+        const issuedAt = payload.iat * 1000; // Convert to ms
+        const logoutAt = new Date(profile.force_logout_at).getTime();
+
+        if (issuedAt < logoutAt) {
+          console.log(`[Auth] Rejecting revoked token for ${profile.full_name} (issued before logout)`);
+          sessionCache.delete(token);
+          return res.status(401).json({ success: false, error: "Session expired. Please login again.", code: 401 });
+        }
+      } catch (e) {
+        console.error("[Auth] JWT decode error:", e);
+      }
     }
 
     // Update last seen (fire and forget)

@@ -1,5 +1,6 @@
 const { supabase } = require("../../config/supabase");
 const { ok, paginated, fail } = require("../../utils/http");
+const { broadcastRealtime } = require("../../realtime");
 const { auditLogger } = require("../../utils/auditLogger");
 
 const list = async (req, res, next) => {
@@ -68,6 +69,9 @@ const block = async (req, res, next) => {
     // Force sign out in Supabase Auth
     await supabase.rpc('delete_user_sessions', { target_user_id: id });
 
+    // PUSH Realtime Security Event
+    broadcastRealtime({ type: "security_blocked" }, id);
+
     // Add to audit logs
     await supabase.from("account_audit_logs").insert({
       action_type: 'block',
@@ -119,6 +123,9 @@ const forceLogout = async (req, res, next) => {
     // Force sign out in Supabase Auth by deleting all sessions
     const { error: signOutErr } = await supabase.rpc('delete_user_sessions', { target_user_id: id });
     
+    // PUSH Realtime Security Event
+    broadcastRealtime({ type: "security_logout" }, id);
+
     if (signOutErr) {
       console.error(`[Admin] Force logout failed for user ${id}:`, signOutErr);
       throw fail(signOutErr.message);

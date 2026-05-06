@@ -20,8 +20,20 @@ const initRealtime = (server) => {
   });
   wssInstance.on("connection", (socket) => {
     socket.isAlive = true;
+    socket.userId = null; // To be identified
     socket.on("pong", () => {
       socket.isAlive = true;
+    });
+    socket.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.type === "identify" && msg.userId) {
+          socket.userId = msg.userId;
+          console.log("Socket identified for user:", msg.userId);
+        }
+      } catch (e) {
+        // ignore
+      }
     });
     socket.send(JSON.stringify({ type: "connected", ts: Date.now() }));
   });
@@ -50,12 +62,26 @@ const initRealtime = (server) => {
   return wssInstance;
 };
 
-const broadcastRealtime = (payload) => {
+const broadcastRealtime = (payload, targetUserIds = null) => {
   if (!wssInstance) return;
-  console.log("Broadcasting realtime event:", payload.type, payload.event || "");
+  console.log("Broadcasting realtime event:", payload.type, "Target:", targetUserIds || "everyone");
   const msg = JSON.stringify({ ...payload, ts: Date.now() });
   wssInstance.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) client.send(msg);
+    if (client.readyState !== WebSocket.OPEN) return;
+    
+    // If targetUserIds is provided, only send to those users
+    if (targetUserIds) {
+      if (Array.isArray(targetUserIds)) {
+        if (targetUserIds.includes(client.userId)) {
+          client.send(msg);
+        }
+      } else if (client.userId === targetUserIds) {
+        client.send(msg);
+      }
+    } else {
+      // Broadcast to everyone (system updates, etc.)
+      client.send(msg);
+    }
   });
 };
 

@@ -24,7 +24,7 @@ exports.getContacts = async (req, res, next) => {
           .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${user.id}),and(sender_id.eq.${user.id},receiver_id.eq.${currentUserId})`)
           .order("created_at", { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         // Unread count
         const { count: unreadCount } = await supabase
@@ -35,17 +35,17 @@ exports.getContacts = async (req, res, next) => {
           .eq("is_read", false);
 
         // Presence
-        const { data: presence } = await supabase
+        const { data: presenceData } = await supabase
           .from("user_presence")
-          .select("is_online, last_seen")
+          .select("is_online, last_seen, is_typing_to")
           .eq("user_id", user.id)
-          .single();
+          .maybeSingle();
 
         return {
           ...user,
           last_message: lastMsg || null,
           unread_count: unreadCount || 0,
-          presence: presence || { is_online: false, last_seen: null },
+          presence: presenceData || { is_online: false, last_seen: null, is_typing_to: null },
         };
       })
     );
@@ -88,11 +88,11 @@ exports.sendMessage = async (req, res, next) => {
 
     if (error) throw error;
 
-    // Broadcast via WebSocket
+    // Broadcast via WebSocket to sender and receiver
     broadcastRealtime({
       type: "new_message",
       data: message,
-    });
+    }, [currentUserId, receiver_id]);
 
     res.status(201).json({ success: true, data: message });
   } catch (error) {
@@ -114,14 +114,14 @@ exports.markAsRead = async (req, res, next) => {
 
     if (error) throw error;
 
-    // Broadcast via WebSocket
+    // Broadcast via WebSocket to the sender (so they see the ticks turn blue)
     broadcastRealtime({
       type: "messages_read",
       data: {
         reader_id: currentUserId,
         sender_id: contactId,
       },
-    });
+    }, [contactId]);
 
     res.json({ success: true, data: { status: "read" } });
   } catch (error) {
@@ -142,11 +142,11 @@ exports.updatePresence = async (req, res, next) => {
       .from("user_presence")
       .upsert({ user_id: currentUserId, ...updateData })
       .select("*")
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
 
-    // Broadcast via WebSocket
+    // Broadcast presence to everyone (authenticated users)
     broadcastRealtime({
       type: "presence_updated",
       data: presence,

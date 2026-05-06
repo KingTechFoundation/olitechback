@@ -51,14 +51,17 @@ const authMiddleware = async (req, res, next) => {
     // 5. Check for Force Logout (Token Revocation)
     if (profile.force_logout_at) {
       try {
-        // Decode JWT payload manually to get 'iat' (issued at)
         const payloadBase64 = token.split('.')[1];
         const payload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString());
-        const issuedAt = payload.iat * 1000; // Convert to ms
-        const logoutAt = new Date(profile.force_logout_at).getTime();
+        
+        // Issued At (iat) is in seconds, convert to milliseconds
+        const issuedAtMs = payload.iat * 1000;
+        const revokedAtMs = new Date(profile.force_logout_at).getTime();
 
-        if (issuedAt < logoutAt) {
-          console.log(`[Auth] Rejecting revoked token for ${profile.full_name} (issued before logout)`);
+        // If the token was issued BEFORE the last forced logout, it is invalid
+        // We add a 1-second grace buffer for clock skew
+        if (issuedAtMs < revokedAtMs - 1000) {
+          console.warn(`[Auth] Rejecting revoked token for ${profile.full_name}. Issued: ${new Date(issuedAtMs).toISOString()}, Revoked: ${new Date(revokedAtMs).toISOString()}`);
           sessionCache.delete(token);
           return res.status(401).json({ success: false, error: "Session expired. Please login again.", code: 401 });
         }
@@ -79,7 +82,7 @@ const authMiddleware = async (req, res, next) => {
       token,
     };
 
-    // 4. Update cache with just the core Auth data (already done above, but let's keep it consistent)
+    // 4. Update cache
     sessionCache.set(token, { userData, timestamp: Date.now() });
     
     // Periodically clean up old cache entries

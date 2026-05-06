@@ -37,13 +37,20 @@ const authMiddleware = async (req, res, next) => {
     // 3. Fetch/Verify profile
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
-      .select("id, full_name, role, is_active")
+      .select("id, full_name, role, is_active, is_blocked")
       .eq("id", userData.user.id)
       .single();
 
     if (profileErr || !profile || !profile.is_active) {
       return res.status(403).json({ success: false, error: "User inactive or missing profile", code: 403 });
     }
+
+    if (profile.is_blocked) {
+      return res.status(403).json({ success: false, error: "Contact OlitechHub admin for Assistance", code: 403, blocked: true });
+    }
+
+    // Update last seen (fire and forget)
+    supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", profile.id).then(()=>{});
 
     const userPayload = {
       id: userData.user.id,

@@ -57,6 +57,10 @@ const login = async (req, res, next) => {
       }
       throw fail("Profile not found for this user.", 403);
     }
+
+    if (profile.is_blocked) {
+      throw fail("Contact OlitechHub admin for Assistance", 403);
+    }
     
     // Fire-and-forget: log the successful login (non-blocking)
     supabase.from("login_logs").insert({

@@ -34,4 +34,8 @@ r.put(
 r.patch("/:id/deactivate", allowRoles("developer"), c.deactivate);
 r.patch("/:id/reset-password", allowRoles("developer"), [body("email").isEmail()], (req, res, next) => { try { validate(req); } catch (e) { return next(e); } c.resetPassword(req, res, next); });
 
+r.post("/:id/block", allowRoles("developer"), c.block);
+r.post("/:id/unblock", allowRoles("developer"), c.unblock);
+r.post("/:id/force-logout", allowRoles("developer"), c.forceLogout);
+
 module.exports = r;

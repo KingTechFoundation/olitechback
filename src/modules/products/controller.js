@@ -28,7 +28,7 @@ const list = async (req, res, next) => {
       const s = String(req.query.search).trim();
       if (s) {
         const term = s.replace(/[,%()]/g, " ");
-        q = q.or(`name.ilike.*${term}*,barcode.ilike.*${term}*`);
+        q = q.ilike("name", `%${term}%`);
       }
     }
 
@@ -45,16 +45,20 @@ const create = async (req, res, next) => {
   try {
     const { data: s } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
     const { initial_stock = 0, ...productFields } = req.body;
-    const isWeighed = Boolean(productFields.is_weighed);
+    
     const payload = normalizePackageFields({
       ...productFields,
-      unit_of_measure: isWeighed ? (productFields.unit_of_measure || "kg") : (productFields.unit_of_measure || "piece"),
+      unit_of_measure: "piece",
+      is_weighed: false,
       low_stock_threshold: Number(req.body.low_stock_threshold ?? s.default_low_stock_threshold),
     });
+
+    // Remove barcode if it's empty or not provided to avoid unique constraint issues if it's optional in DB
+    if (!payload.barcode) delete payload.barcode;
+
     const { data, error } = await supabase.from("products").insert([payload]).select().single();
     if (error) {
       const msg = String(error.message || "");
-      if (msg.toLowerCase().includes("barcode")) throw fail("barcode must be unique across all products");
       if (msg.includes("products_package_size_check")) throw fail("Package size must be greater than 1 for packaged products.");
       throw fail(msg);
     }
@@ -65,7 +69,7 @@ const create = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 const getOne = async (req, res, next) => { try { const { data, error } = await supabase.from("products").select("*, categories(name), inventory(quantity_in_stock)").eq("id", req.params.id).single(); if (error) throw fail(error.message, 404); return ok(res, data); } catch (e) { next(e); } };
-const byBarcode = async (req, res, next) => { try { const { data, error } = await supabase.from("products").select("*, categories(name), inventory(quantity_in_stock)").eq("barcode", req.params.code).single(); if (error) throw fail("Product not found", 404); return ok(res, data); } catch (e) { next(e); } };
+
 const update = async (req, res, next) => {
   try {
     const payload = normalizePackageFields({ ...(req.body || {}) });
@@ -77,9 +81,6 @@ const update = async (req, res, next) => {
     const { data, error } = await supabase.from("products").update(payload).eq("id", req.params.id).select().single();
     if (error) {
       const msg = String(error.message || "");
-      if (msg.toLowerCase().includes("barcode")) {
-        throw fail("barcode must be unique across all products");
-      }
       if (msg.includes("products_package_size_check")) {
         throw fail("Package size must be greater than 1 for packaged products.");
       }
@@ -125,4 +126,5 @@ const lowStock = async (req, res, next) => {
   }
 };
 
-module.exports = { list, create, getOne, byBarcode, update, updatePrice, deactivate, lowStock };
+module.exports = { list, create, getOne, update, updatePrice, deactivate, lowStock };
+

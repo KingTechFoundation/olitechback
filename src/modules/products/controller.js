@@ -8,11 +8,13 @@ const normalizePackageFields = (payload) => {
   const isPackage = Boolean(out.is_package);
   if (!isPackage) {
     out.package_size = null;
+    out.package_buying_price = null;
     out.package_selling_price = null;
     return out;
   }
-  out.package_size = Number(out.package_size);
-  out.package_selling_price = Number(out.package_selling_price);
+  out.package_size = Number(out.package_size || 0);
+  out.package_buying_price = Number(out.package_buying_price || 0);
+  out.package_selling_price = Number(out.package_selling_price || 0);
   return out;
 };
 

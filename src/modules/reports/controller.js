@@ -563,29 +563,26 @@ const dashboardSummary = async (req, res, next) => {
 
     const stockRows = stockRowsRes.data || [];
     
-    // Map products with their individual calculated values
-    const productsWithValues = stockRows.map((p) => {
+    // Calculate totals
+    let totalStockValue = 0;
+    let totalExpectedRevenue = 0;
+    stockRows.forEach((p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
       const unitCost = stockUnitCost(p);
-      const value = Math.round(qty * unitCost);
       const sellingPrice = Number(p.selling_price || 0);
-      return {
-        id: p.id,
-        name: p.name,
-        qty,
-        unitCost,
-        value,
-        expected_revenue: qty * sellingPrice
-      };
+      totalStockValue += (qty * unitCost);
+      totalExpectedRevenue += (qty * sellingPrice);
     });
 
-    const totalStockValue = productsWithValues.reduce((acc, p) => acc + p.value, 0);
-    const totalExpectedRevenue = productsWithValues.reduce((acc, p) => acc + p.expected_revenue, 0);
-
-    // Get top 5 items contributing to the value for debugging
-    const topContributors = [...productsWithValues]
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
+    // Fetch Today's Stock Movements (Stock In & Adjustments)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const { data: movements } = await supabase
+      .from("stock_movements")
+      .select("quantity_change, movement_type, created_at, products(name, package_size, categories(name))")
+      .gte("created_at", todayStart.toISOString())
+      .in("movement_type", ["stock_in", "adjustment"])
+      .order("created_at", { ascending: false });
 
     const { data: s } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
     const defaultThreshold = Number(s?.default_low_stock_threshold ?? 10);
@@ -608,10 +605,10 @@ const dashboardSummary = async (req, res, next) => {
       profit: profitData,
       expenses: expenseData,
       stock: { 
-        total_value: Number(totalStockValue || 0),
-        total_expected_revenue: Number(totalExpectedRevenue || 0),
-        top_contributors: topContributors 
+        total_value: Math.round(totalStockValue),
+        total_expected_revenue: Math.round(totalExpectedRevenue)
       },
+      stock_activity: movements || [], // New activity feed
       low_stock_count: lowCount,
       default_low_stock_threshold: defaultThreshold,
     });

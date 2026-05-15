@@ -503,7 +503,7 @@ const dashboardSummary = async (req, res, next) => {
       (() => {
         let q = supabase
           .from("sale_items")
-          .select("quantity,line_total,products(buying_price),sales!inner(created_at,status)")
+          .select("quantity,line_total,sold_as,products(buying_price, is_package, package_size, package_buying_price),sales!inner(created_at,status)")
           .eq("sales.status", "completed");
         if (from && to) q = inRange(q, from, to, "sales.created_at");
         return q;
@@ -515,7 +515,8 @@ const dashboardSummary = async (req, res, next) => {
       })(),
       supabase
         .from("products")
-        .select("id, name, buying_price, is_package, package_size, package_buying_price, low_stock_threshold, is_active, inventory(quantity_in_stock)"),
+        .select("id, name, buying_price, is_package, package_size, package_buying_price, low_stock_threshold, is_active, inventory(quantity_in_stock)")
+        .eq("is_active", true),
     ]);
 
     if (payRowsRes.error) throw fail(payRowsRes.error.message);
@@ -545,24 +546,32 @@ const dashboardSummary = async (req, res, next) => {
 
     const profitRows = profitRowsRes.data || [];
     const revenue = Math.round(profitRows.reduce((a, i) => a + Number(i.line_total), 0));
-    const cost = Math.round(profitRows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0));
+    
+    // Improved Cost of Goods calculation that accounts for packages
+    const cost = Math.round(profitRows.reduce((acc, i) => {
+      const p = i.products;
+      const unitCost = stockUnitCost(p || {});
+      return acc + (Number(i.quantity) * unitCost);
+    }, 0));
+
     const profitData = { revenue, cost_of_goods: cost, profit: revenue - cost };
     const expenseRows = expenseRowsRes.data || [];
     const expenseData = {
       total: expenseRows.reduce((acc, x) => acc + Number(x.amount || 0), 0),
       count: expenseRows.length,
     };
-    const stockRows = (stockRowsRes.data || []).filter(p => p.is_active !== false);
+
+    const stockRows = stockRowsRes.data || [];
     const totalStockValue = Math.round(stockRows.reduce((acc, p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
       const unitCost = stockUnitCost(p);
       return acc + qty * unitCost;
     }, 0));
+
     const { data: s } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
     const defaultThreshold = Number(s?.default_low_stock_threshold ?? 10);
     
     const lowCount = stockRows.filter((p) => {
-      if (p.is_active === false) return false;
       const qty = quantityFromInventoryEmbed(p.inventory);
       const thr = p.low_stock_threshold === null || p.low_stock_threshold === undefined
         ? defaultThreshold

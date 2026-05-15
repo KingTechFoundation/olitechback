@@ -493,7 +493,7 @@ const dashboardSummary = async (req, res, next) => {
     const date = req.query.date;
     const from = req.query.from || date;
     const to = req.query.to || date;
-    const [salesAgg, payRowsRes, profitRowsRes, expenseRowsRes, stockRowsRes] = await Promise.all([
+    const [salesAgg, payRowsRes, profitRowsRes, expenseRowsRes, stockRowsRes, installmentRes, outstandingRes, savingsRes] = await Promise.all([
       from && to ? aggregateCompletedSalesInRange(from, to) : aggregateCompletedSalesInRange(null, null),
       (() => {
         let q = supabase.from("payments").select("method, amount, sale_id, sales!inner(total_amount, status, created_at)").eq("sales.status", "completed");
@@ -503,7 +503,7 @@ const dashboardSummary = async (req, res, next) => {
       (() => {
         let q = supabase
           .from("sale_items")
-          .select("quantity,line_total,sold_as,products(buying_price, is_package, package_size, package_buying_price),sales!inner(created_at,status)")
+          .select("quantity,line_total,sold_as,products(buying_price, is_package, package_size, package_buying_price),sales!inner(id,created_at,status)")
           .eq("sales.status", "completed");
         if (from && to) q = inRange(q, from, to, "sales.created_at");
         return q;
@@ -517,12 +517,25 @@ const dashboardSummary = async (req, res, next) => {
         .from("products")
         .select("id, name, buying_price, selling_price, is_package, package_size, package_buying_price, low_stock_threshold, is_active, inventory(quantity_in_stock)")
         .eq("is_active", true),
+      (() => {
+        let q = supabase.from("credit_installments").select("amount, created_at");
+        if (from && to) q = q.gte("created_at", `${from}T00:00:00Z`).lte("created_at", `${to}T23:59:59Z`);
+        return q;
+      })(),
+      supabase.from("credit_sales").select("total_amount, amount_paid, balance_remaining, status").neq("status", "paid"),
+      supabase.from("cash_savings").select("amount"),
     ]);
 
     if (payRowsRes.error) throw fail(payRowsRes.error.message);
     if (profitRowsRes.error) throw fail(profitRowsRes.error.message);
     if (expenseRowsRes.error) throw fail(expenseRowsRes.error.message);
     if (stockRowsRes.error) throw fail(stockRowsRes.error.message);
+    if (installmentRes.error) throw fail(installmentRes.error.message);
+    if (outstandingRes.error) throw fail(outstandingRes.error.message);
+    if (savingsRes.error) throw fail(savingsRes.error.message);
+    
+    // Total savings sum
+    const savingsTotal = (savingsRes.data || []).reduce((a, b) => a + Number(b.amount), 0);
 
     const paymentsBySale = {};
     (payRowsRes.data || []).forEach((p) => {
@@ -536,7 +549,7 @@ const dashboardSummary = async (req, res, next) => {
       paymentsBySale[sid].rows.push(p);
     });
 
-    const paymentData = { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0 };
+    const paymentData = { CASH: 0, MOMO_CODE: 0, PHONE_NUMBER: 0, POS: 0, CREDIT: 0 };
     Object.values(paymentsBySale).forEach((sale) => {
       const attributed = attributePayments(sale.total_amount, sale.rows);
       attributed.forEach((p) => {
@@ -544,20 +557,99 @@ const dashboardSummary = async (req, res, next) => {
       });
     });
 
-    const profitRows = profitRowsRes.data || [];
-    const revenue = Math.round(profitRows.reduce((a, i) => a + Number(i.line_total), 0));
-    
-    // Improved Cost of Goods calculation that accounts for packages
-    const cost = Math.round(profitRows.reduce((acc, i) => {
-      const p = i.products;
-      const unitCost = stockUnitCost(p || {});
-      return acc + (Number(i.quantity) * unitCost);
-    }, 0));
+    // Add installments to appropriate payment methods if needed, 
+    // but for the dashboard we mainly care about total collections.
+    const installmentsTotal = (installmentRes.data || []).reduce((a, b) => a + Number(b.amount), 0);
+    // Compute outstanding: use balance_remaining if set, otherwise fall back to total_amount - amount_paid
+    const outstandingTotal = (outstandingRes.data || []).reduce((a, b) => {
+      const balance = b.balance_remaining !== null && b.balance_remaining !== undefined
+        ? Number(b.balance_remaining)
+        : Math.max(0, Number(b.total_amount || 0) - Number(b.amount_paid || 0));
+      return a + balance;
+    }, 0);
 
-    const profitData = { revenue, cost_of_goods: cost, profit: revenue - cost };
+    // 1. Calculate cost for installments collected today
+    let installmentsCostTotal = 0;
+    const installmentData = installmentRes.data || [];
+    if (installmentData.length > 0) {
+       // Get credit sale IDs
+       const { data: creditSales } = await supabase
+         .from("credit_sales")
+         .select("id, sale_id")
+         .in("id", installmentData.map(i => i.credit_sale_id));
+       
+       if (creditSales?.length > 0) {
+         const saleIds = creditSales.map(cs => cs.sale_id);
+         const { data: originalItems } = await supabase
+           .from("sale_items")
+           .select("sale_id, quantity, products(buying_price, is_package, package_size, package_buying_price), sales!inner(total_amount)")
+           .in("sale_id", saleIds);
+         
+         // Group cost by sale
+         const saleCostMap = {};
+         (originalItems || []).forEach(item => {
+           const sid = item.sale_id;
+           const p = item.products;
+           const unitCost = stockUnitCost(p || {});
+           const itemCost = Number(item.quantity) * unitCost;
+           const saleTotal = Number(item.sales?.total_amount || 0);
+           
+           if (!saleCostMap[sid]) saleCostMap[sid] = { totalCost: 0, saleTotal };
+           saleCostMap[sid].totalCost += itemCost;
+         });
+
+         const creditToSaleMap = Object.fromEntries(creditSales.map(cs => [cs.id, cs.sale_id]));
+         
+         installmentData.forEach(inst => {
+           const sid = creditToSaleMap[inst.credit_sale_id];
+           if (sid && saleCostMap[sid]) {
+             const { totalCost, saleTotal } = saleCostMap[sid];
+             const costRatio = saleTotal > 0 ? totalCost / saleTotal : 0;
+             installmentsCostTotal += (Number(inst.amount) * costRatio);
+           }
+         });
+       }
+    }
+
+    const profitRows = profitRowsRes.data || [];
+    
+    // REVENUE = All non-credit payments + all installments
+    // This ensures that "Credit" is NOT counted as revenue until money is actually received.
+    const actualRevenue = (paymentData.CASH + paymentData.MOMO_CODE + paymentData.PHONE_NUMBER + paymentData.POS) + installmentsTotal;
+    
+    // Improved Cost of Goods calculation that accounts for packages AND payment attribution.
+    // We only count the cost of the portion that was actually paid for today.
+    const cost = Math.round(profitRows.reduce((acc, item) => {
+      const p = item.products;
+      const unitCost = stockUnitCost(p || {});
+      const sid = item.sales?.id;
+      
+      let attributionFactor = 1;
+      if (sid && paymentsBySale[sid]) {
+        const sale = paymentsBySale[sid];
+        const attributed = attributePayments(sale.total_amount, sale.rows);
+        const cashCaptured = attributed
+          .filter(p => ["CASH", "MOMO_CODE", "PHONE_NUMBER", "POS"].includes(p.method))
+          .reduce((a, p) => a + p.captured, 0);
+        
+        attributionFactor = sale.total_amount > 0 ? cashCaptured / sale.total_amount : 0;
+      }
+      
+      const itemCost = (Number(item.quantity) * unitCost) * attributionFactor;
+      return acc + itemCost;
+    }, 0)) + Math.round(installmentsCostTotal);
+
     const expenseRows = expenseRowsRes.data || [];
+    const totalExpenses = expenseRows.reduce((acc, x) => acc + Number(x.amount || 0), 0);
+
+    const profitData = { 
+      revenue: actualRevenue, 
+      cost_of_goods: cost, 
+      expenses: totalExpenses,
+      profit: actualRevenue - cost - totalExpenses 
+    };
     const expenseData = {
-      total: expenseRows.reduce((acc, x) => acc + Number(x.amount || 0), 0),
+      total: totalExpenses,
       count: expenseRows.length,
     };
 
@@ -599,11 +691,18 @@ const dashboardSummary = async (req, res, next) => {
       date: date || from,
       daily: {
         transactions: Number(salesAgg.transactions || 0),
-        revenue: Number(salesAgg.revenue || 0),
+        revenue: actualRevenue,
       },
       payments: paymentData,
       profit: profitData,
       expenses: expenseData,
+      credits: {
+        outstanding: outstandingTotal,
+        installments_collected: installmentsTotal
+      },
+      savings: {
+        total: savingsTotal
+      },
       stock: { 
         total_value: Math.round(totalStockValue),
         total_expected_revenue: Math.round(totalExpectedRevenue)

@@ -1,5 +1,6 @@
 const { supabase } = require("../../config/supabase");
 const { ok, paginated, fail } = require("../../utils/http");
+const { broadcastRealtime } = require("../../realtime");
 
 const list = async (req, res, next) => {
   try {
@@ -16,10 +17,7 @@ const list = async (req, res, next) => {
     }
 
     if (search) {
-      // Note: Search on joined tables in Supabase can be tricky depending on setup.
-      // We'll search primarily by status and then filter if needed, 
-      // but for better results we'd use a view or a search function.
-      // For now, we'll try basic filtering.
+      q = q.or(`full_name.ilike.%${search}%,phone_number.ilike.%${search}%`, { foreignTable: "customers" });
     }
 
     const { data, count, error } = await q.range(from, from + Number(limit) - 1);
@@ -75,6 +73,10 @@ const recordInstallment = async (req, res, next) => {
       .single();
     
     if (updErr) throw fail(updErr.message);
+
+    // Broadcast real-time update so Credit Ledger & Dashboard Total Debt refresh
+    broadcastRealtime({ type: "credits:updated", event: "installment", credit_sale_id });
+    broadcastRealtime({ type: "dashboard:refresh" });
 
     return ok(res, updated);
   } catch (e) { next(e); }

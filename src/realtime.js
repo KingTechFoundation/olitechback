@@ -214,6 +214,64 @@ const initRealtime = (server) => {
     })
     .subscribe();
 
+  // Bridge for Expenses
+  supabase
+    .channel('db-expenses')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, (payload) => {
+      console.log("[Realtime] DB Change (Expenses):", payload.eventType);
+      io.emit("expense:new", { event: payload.eventType, ...payload.new });
+      io.emit("dashboard:refresh");
+    })
+    .subscribe();
+
+  // Bridge for Credit Sales
+  supabase
+    .channel('db-credit-sales')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'credit_sales' }, (payload) => {
+      console.log("[Realtime] DB Change (Credit Sales):", payload.eventType);
+      io.emit("credits:updated", { event: payload.eventType, ...payload.new });
+      io.emit("dashboard:refresh");
+    })
+    .subscribe();
+
+  // Bridge for Credit Installments (debt repayments)
+  supabase
+    .channel('db-credit-installments')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'credit_installments' }, (payload) => {
+      console.log("[Realtime] DB Change (Credit Installment):", payload.new.id);
+      io.emit("credits:updated", { event: "INSERT", ...payload.new });
+      io.emit("dashboard:refresh");
+    })
+    .subscribe();
+
+  // Bridge for Cash Savings (boss withdrawals)
+  supabase
+    .channel('db-cash-savings')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'cash_savings' }, (payload) => {
+      console.log("[Realtime] DB Change (Cash Savings):", payload.new.id);
+      io.emit("dashboard:refresh");
+    })
+    .subscribe();
+
+  // Bridge for EOD Sessions
+  supabase
+    .channel('db-eod-sessions')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'eod_sessions' }, (payload) => {
+      console.log("[Realtime] DB Change (EOD):", payload.eventType);
+      io.emit("eod:submitted", { event: payload.eventType, ...payload.new });
+      io.emit("dashboard:refresh");
+    })
+    .subscribe();
+
+  // Bridge for Customers
+  supabase
+    .channel('db-customers')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload) => {
+      console.log("[Realtime] DB Change (Customers):", payload.eventType);
+      io.emit("customers:updated", { event: payload.eventType, ...payload.new });
+    })
+    .subscribe();
+
   return io;
 };
 

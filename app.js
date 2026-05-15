@@ -25,6 +25,7 @@ const paymentNotificationsRoutes = require("./src/modules/payment_notifications/
 const chatRoutes = require("./src/modules/chat/routes");
 const customersRoutes = require("./src/modules/customers/routes");
 const creditsRoutes = require("./src/modules/credits/routes");
+const savingsRoutes = require("./src/modules/savings/routes");
 
 const app = express();
 app.use(cors());
@@ -52,6 +53,7 @@ app.use("/api/payment-notifications", auth, paymentNotificationsRoutes);
 app.use("/api/chat", auth, chatRoutes);
 app.use("/api/customers", auth, customersRoutes);
 app.use("/api/credits", auth, creditsRoutes);
+app.use("/api/savings", auth, savingsRoutes);
 
 // ─── SSE Fallback Endpoint ────────────────────────────────────────────────────
 // Clients that cannot establish a WebSocket connection (corporate proxies/firewalls)

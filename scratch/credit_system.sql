@@ -1,9 +1,11 @@
+-- 0. Update Payment Method Enum
+ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'CREDIT';
+
 -- 1. Create Customers Table
 create table if not exists customers (
   id bigserial primary key,
   full_name text not null,
   phone_number text unique not null,
-  email text,
   address text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

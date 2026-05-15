@@ -8,7 +8,7 @@ const list = async (req, res, next) => {
     
     let q = supabase
       .from("customers")
-      .select("*", { count: "exact" })
+      .select("*, credit_sales(balance_remaining)", { count: "exact" })
       .order("full_name", { ascending: true });
 
     if (search) {
@@ -17,16 +17,24 @@ const list = async (req, res, next) => {
 
     const { data, count, error } = await q.range(from, from + Number(limit) - 1);
     if (error) throw fail(error.message);
-    return paginated(res, data, Number(page), Number(limit), count);
+
+    // Compute summary
+    const enriched = data.map(c => {
+      const credits = c.credit_sales || [];
+      const total_debt = credits.reduce((acc, curr) => acc + Number(curr.balance_remaining), 0);
+      return { ...c, total_debt, credit_sales: undefined };
+    });
+
+    return paginated(res, enriched, Number(page), Number(limit), count);
   } catch (e) { next(e); }
 };
 
 const create = async (req, res, next) => {
   try {
-    const { full_name, phone_number, email, address } = req.body;
+    const { full_name, phone_number, address } = req.body;
     const { data, error } = await supabase
       .from("customers")
-      .insert([{ full_name, phone_number, email, address }])
+      .insert([{ full_name, phone_number, address }])
       .select()
       .single();
     if (error) throw fail(error.message);
@@ -37,10 +45,10 @@ const create = async (req, res, next) => {
 const update = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { full_name, phone_number, email, address } = req.body;
+    const { full_name, phone_number, address } = req.body;
     const { data, error } = await supabase
       .from("customers")
-      .update({ full_name, phone_number, email, address, updated_at: new Date() })
+      .update({ full_name, phone_number, address, updated_at: new Date() })
       .eq("id", id)
       .select()
       .single();

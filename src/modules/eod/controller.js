@@ -35,9 +35,18 @@ const expectedCashFor = async (cashier_id, date) => {
   if (expErr) throw fail(expErr.message);
   const cash_expenses = (expenses || []).reduce((a, e) => a + Number(e.amount), 0);
 
-  const expected_cash = opening_balance + cash_sales - cash_expenses;
+  // 4. Get boss savings (withdrawals)
+  const { data: savings, error: savErr } = await supabase
+    .from("cash_savings")
+    .select("amount")
+    .eq("recorded_by", cashier_id)
+    .eq("date", date);
+  if (savErr) throw fail(savErr.message);
+  const boss_savings = (savings || []).reduce((a, s) => a + Number(s.amount), 0);
+
+  const expected_cash = opening_balance + cash_sales - cash_expenses - boss_savings;
   
-  return { expected_cash, opening_balance, cash_sales, cash_expenses };
+  return { expected_cash, opening_balance, cash_sales, cash_expenses, boss_savings };
 };
 
 const setOpeningBalance = async (req, res, next) => {
@@ -69,7 +78,7 @@ const submit = async (req, res, next) => {
     const { cashier_id, date, counted_cash, notes: bodyNotes } = req.body;
     const userNotes = typeof bodyNotes === "string" ? bodyNotes.trim() : "";
 
-    // Get cashier name for the notification
+    // 1. Get cashier name and profile
     const { data: cashierProfile } = await supabase
       .from("profiles")
       .select("full_name")
@@ -77,20 +86,26 @@ const submit = async (req, res, next) => {
       .single();
     const cashierName = cashierProfile?.full_name || "Unknown Cashier";
 
-    const { expected_cash } = await expectedCashFor(cashier_id, date);
-    const discrepancy = Number(counted_cash) - expected_cash;
+    // 2. Get expected totals
+    const { expected_cash, opening_balance, cash_sales, cash_expenses, boss_savings } = await expectedCashFor(cashier_id, date);
     
-    // Combine auto-generated notes with user justification
-    let systemNotes = "Perfect Match (No Discrepancy)";
-    if (discrepancy < 0) systemNotes = `Shortage ${Math.abs(discrepancy)}`;
-    else if (discrepancy > 0) systemNotes = `Excess ${discrepancy}`;
+    // 3. Calculate discrepancy and status
+    const discrepancy = Number(counted_cash) - expected_cash;
+    let status = "balanced";
+    let statusText = "Balanced";
+    let severity = "info";
 
-    const notes = userNotes
-      ? `${systemNotes} | Cashier Note: ${userNotes}`
-      : systemNotes;
+    if (discrepancy < 0) {
+      status = "shortage";
+      statusText = `Shortage: RWF ${Math.abs(discrepancy).toLocaleString()}`;
+      severity = "critical";
+    } else if (discrepancy > 0) {
+      status = "excess";
+      statusText = `Excess: RWF ${discrepancy.toLocaleString()}`;
+      severity = "warning";
+    }
 
-    const status = discrepancy === 0 ? "approved" : "pending";
-
+    // 4. Record the EOD session
     const { data, error } = await supabase
       .from("eod_sessions")
       .upsert(
@@ -99,8 +114,13 @@ const submit = async (req, res, next) => {
           date, 
           counted_cash, 
           expected_cash, 
-          status,
-          notes,
+          opening_balance,
+          cash_sales,
+          cash_expenses,
+          boss_savings,
+          status: "pending", // Manager still needs to "approve" to clear the record
+          discrepancy_status: status, // New field for quick filtering
+          notes: userNotes ? `${statusText} | Note: ${userNotes}` : statusText,
           updated_at: new Date().toISOString()
         },
         { onConflict: "cashier_id,date" }
@@ -110,38 +130,29 @@ const submit = async (req, res, next) => {
 
     if (error) throw fail(error.message);
 
-    // Create a notification for the owner
-    const absDiscrepancy = Math.abs(discrepancy);
-    let severity = "info";
-    let statusText = "Balanced";
-    
-    if (discrepancy < 0) {
-      statusText = `Shortage of ${absDiscrepancy.toLocaleString()} RWF`;
-      severity = absDiscrepancy >= 2000 ? "critical" : "warning";
-    } else if (discrepancy > 0) {
-      statusText = `Excess of ${discrepancy.toLocaleString()} RWF`;
-      severity = "warning";
-    }
-
-    // Delete any existing notification for this shift to avoid duplicates
-    const searchTitle = `EOD Settlement: ${cashierName}`;
-    const searchBodyPart = `Shift settlement for ${date}`;
-    await supabase
-      .from("payment_notifications")
-      .delete()
-      .eq("title", searchTitle)
-      .like("body", `%${searchBodyPart}%`);
+    // 5. Create Live Notification for Owner
+    const notificationTitle = `EOD Settlement: ${cashierName}`;
+    const notificationBody = `${cashierName} submitted EOD — ${statusText}`;
 
     await supabase.from("payment_notifications").insert({
-      title: searchTitle,
-      body: `Shift settlement for ${date}: ${statusText}.`,
+      title: notificationTitle,
+      body: notificationBody,
       severity,
       created_by: cashier_id,
-      is_cleared: false
+      is_cleared: false,
+      metadata: { type: "eod_submission", date, status, discrepancy }
     });
 
+    // 6. Real-time Broadcast
     const { broadcastRealtime } = require("../../realtime");
-    broadcastRealtime({ type: "eod:submitted", cashier_id, date });
+    broadcastRealtime({ 
+      type: "eod:submitted", 
+      cashier_id, 
+      date, 
+      status, 
+      cashier_name: cashierName,
+      message: notificationBody
+    });
     broadcastRealtime({ type: "payment_notifs_updated", event: "created" });
     broadcastRealtime({ type: "dashboard:refresh" });
 

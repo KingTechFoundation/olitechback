@@ -562,11 +562,27 @@ const dashboardSummary = async (req, res, next) => {
     };
 
     const stockRows = stockRowsRes.data || [];
-    const totalStockValue = Math.round(stockRows.reduce((acc, p) => {
+    
+    // Map products with their individual calculated values
+    const productsWithValues = stockRows.map((p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
       const unitCost = stockUnitCost(p);
-      return acc + qty * unitCost;
-    }, 0));
+      const value = Math.round(qty * unitCost);
+      return {
+        id: p.id,
+        name: p.name,
+        qty,
+        unitCost,
+        value
+      };
+    });
+
+    const totalStockValue = productsWithValues.reduce((acc, p) => acc + p.value, 0);
+
+    // Get top 5 items contributing to the value for debugging
+    const topContributors = [...productsWithValues]
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
 
     const { data: s } = await supabase.from("settings").select("default_low_stock_threshold").eq("id", 1).single();
     const defaultThreshold = Number(s?.default_low_stock_threshold ?? 10);
@@ -588,7 +604,10 @@ const dashboardSummary = async (req, res, next) => {
       payments: paymentData,
       profit: profitData,
       expenses: expenseData,
-      stock: { total_value: Number(totalStockValue || 0) },
+      stock: { 
+        total_value: Number(totalStockValue || 0),
+        top_contributors: topContributors // This will show us who the culprits are
+      },
       low_stock_count: lowCount,
       default_low_stock_threshold: defaultThreshold,
     });

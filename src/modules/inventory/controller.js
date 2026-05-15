@@ -40,6 +40,8 @@ const list = async (req, res, next) => {
         products: {
           name: p.name,
           barcode: p.barcode,
+          buying_price: p.buying_price,
+          package_buying_price: p.package_buying_price,
           low_stock_threshold: p.low_stock_threshold,
           is_package: p.is_package,
           package_size: p.package_size

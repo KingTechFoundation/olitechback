@@ -552,7 +552,7 @@ const dashboardSummary = async (req, res, next) => {
       total: expenseRows.reduce((acc, x) => acc + Number(x.amount || 0), 0),
       count: expenseRows.length,
     };
-    const stockRows = stockRowsRes.data || [];
+    const stockRows = (stockRowsRes.data || []).filter(p => p.is_active !== false);
     const totalStockValue = Math.round(stockRows.reduce((acc, p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
       const unitCost = stockUnitCost(p);

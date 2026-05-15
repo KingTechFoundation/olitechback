@@ -42,7 +42,14 @@ const withFallbackSaleItemsFromMovements = async (salesRows) => {
 
 const createSale = async (req, res, next) => {
   try {
-    const { cashier_id, print_receipt, items, payments, discount_amount = 0 } = req.body;
+    const { cashier_id, print_receipt, items, payments, discount_amount = 0, customer_id } = req.body;
+    
+    // Check if Credit is used and validate customer
+    const creditPayment = payments.find(p => p.method === "CREDIT");
+    if (creditPayment && !customer_id) {
+      throw fail("Customer selection is required for credit payments.");
+    }
+
     const productIds = [...new Set(items.map((i) => Number(i.product_id)))];
     const [productsRes, inventoryRes] = await Promise.all([
       supabase.from("products").select("*").in("id", productIds),
@@ -92,6 +99,7 @@ const createSale = async (req, res, next) => {
       .insert([{
         receipt_number,
         cashier_id,
+        customer_id, // Link to customer
         total_amount: netTotal,
         discount_amount,
         status: "completed",
@@ -124,6 +132,7 @@ const createSale = async (req, res, next) => {
       supabase.from("payments").insert(paymentsPayload),
       supabase.from("stock_movements").insert(stockMovementsPayload),
     ]);
+
     if (saleItemsInsertRes.error || paymentsInsertRes.error || stockMovementsInsertRes.error) {
       // Prevent orphaned completed sales without line items/payments.
       await supabase.from("sales").delete().eq("id", sale.id);
@@ -133,6 +142,22 @@ const createSale = async (req, res, next) => {
         stockMovementsInsertRes.error?.message ||
         "Failed to save sale details";
       throw fail(writeError);
+    }
+
+    // Handle Credit Creation if applicable
+    if (creditPayment) {
+      const creditAmount = Number(creditPayment.amount);
+      const { error: cErr } = await supabase.from("credit_sales").insert([{
+        sale_id: sale.id,
+        customer_id,
+        total_amount: creditAmount,
+        balance_remaining: creditAmount,
+        status: "unpaid"
+      }]);
+      if (cErr) {
+        // Log error but don't fail the whole sale since sale is committed
+        console.error("Failed to create credit record:", cErr.message);
+      }
     }
 
     const inventoryUpdatePromises = [...requiredByProductId.entries()].map(([productId, requiredQty]) => {

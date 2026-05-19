@@ -63,12 +63,12 @@ const exportFullReportPdf = async (req, res, date) => {
         aggregateCompletedSalesInRange(date, date),
         inRange(supabase.from("sale_items").select("product_id, quantity, line_total, products(name), sales!inner(status)").eq("sales.status", "completed"), date, date, "sales.created_at"),
         inRange(supabase.from("payments").select("method,amount,sales!inner(status)").eq("sales.status", "completed"), date, date, "sales.created_at"),
-        inRange(supabase.from("sale_items").select("quantity,line_total,products(buying_price),sales!inner(status)").eq("sales.status", "completed"), date, date, "sales.created_at"),
+        inRange(supabase.from("sale_items").select("quantity,line_total,sold_as,products(buying_price,is_package,package_size,package_buying_price),sales!inner(status)").eq("sales.status", "completed"), date, date, "sales.created_at"),
         supabase.from("products").select("name,low_stock_threshold,inventory(quantity_in_stock)")
     ]);
 
     const revenue = saleAgg.revenue;
-    const cost = Math.round((qProfit.data || []).reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0));
+    const cost = Math.round((qProfit.data || []).reduce((a, i) => a + getSaleItemCost(i), 0));
     const profit = revenue - cost;
 
     const productsMap = {};
@@ -343,6 +343,42 @@ const stockUnitCost = (p) => {
   return Number(p.buying_price || 0);
 };
 
+const getSaleItemCost = (item) => {
+  const p = item.products || {};
+  if (item.sold_as === "package") {
+    if (Number(p.package_buying_price || 0) > 0) {
+      return Number(item.quantity) * Number(p.package_buying_price);
+    } else {
+      return Number(item.quantity) * Number(p.package_size || 1) * Number(p.buying_price || 0);
+    }
+  }
+  return Number(item.quantity) * Number(p.buying_price || 0);
+};
+
+const getProductStockValue = (p, qty) => {
+  if (p.is_package && Number(p.package_size || 0) > 0 && Number(p.package_buying_price || 0) > 0) {
+    const pkgSize = Number(p.package_size);
+    const packages = Math.floor(qty / pkgSize);
+    const extraPieces = qty % pkgSize;
+    const pkgPrice = Number(p.package_buying_price);
+    const piecePrice = Number(p.buying_price || 0);
+    return (packages * pkgPrice) + (extraPieces * piecePrice);
+  }
+  return qty * Number(p.buying_price || 0);
+};
+
+const getProductExpectedRevenue = (p, qty) => {
+  if (p.is_package && Number(p.package_size || 0) > 0 && Number(p.package_selling_price || 0) > 0) {
+    const pkgSize = Number(p.package_size);
+    const packages = Math.floor(qty / pkgSize);
+    const extraPieces = qty % pkgSize;
+    const pkgPrice = Number(p.package_selling_price);
+    const piecePrice = Number(p.selling_price || 0);
+    return (packages * pkgPrice) + (extraPieces * piecePrice);
+  }
+  return qty * Number(p.selling_price || 0);
+};
+
 const stock = async (req, res, next) => {
   try {
     const { data, error } = await supabase
@@ -356,8 +392,7 @@ const stock = async (req, res, next) => {
     let totalStockValue = 0;
     const products = rows.map((p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
-      const unitCost = stockUnitCost(p);
-      const value = Math.round(qty * unitCost);
+      const value = getProductStockValue(p, qty);
       totalStockValue += value;
 
       return {
@@ -424,14 +459,14 @@ const profitLoss = async (req, res, next) => {
   try {
     let q = supabase
       .from("sale_items")
-      .select("quantity,line_total,products(buying_price),sales!inner(created_at,status)")
+      .select("quantity,line_total,sold_as,products(buying_price,is_package,package_size,package_buying_price),sales!inner(created_at,status)")
       .eq("sales.status", "completed");
     if (req.query.from && req.query.to) q = inRange(q, req.query.from, req.query.to, "sales.created_at");
     const { data, error } = await q;
     if (error) throw fail(error.message);
     const rows = data || [];
     const revenue = rows.reduce((a, i) => a + Number(i.line_total), 0);
-    const cost = Math.round(rows.reduce((a, i) => a + Number(i.quantity) * Number(i.products?.buying_price || 0), 0));
+    const cost = Math.round(rows.reduce((a, i) => a + getSaleItemCost(i), 0));
     const out = { revenue, cost_of_goods: cost, profit: revenue - cost };
     return ok(res, out);
   } catch (e) {
@@ -515,7 +550,7 @@ const dashboardSummary = async (req, res, next) => {
       })(),
       supabase
         .from("products")
-        .select("id, name, buying_price, selling_price, is_package, package_size, package_buying_price, low_stock_threshold, is_active, inventory(quantity_in_stock)")
+        .select("id, name, buying_price, selling_price, is_package, package_size, package_buying_price, package_selling_price, low_stock_threshold, is_active, inventory(quantity_in_stock)")
         .eq("is_active", true),
       (() => {
         let q = supabase.from("credit_installments").select("amount, created_at");
@@ -582,16 +617,14 @@ const dashboardSummary = async (req, res, next) => {
          const saleIds = creditSales.map(cs => cs.sale_id);
          const { data: originalItems } = await supabase
            .from("sale_items")
-           .select("sale_id, quantity, products(buying_price, is_package, package_size, package_buying_price), sales!inner(total_amount)")
+           .select("sale_id, quantity, sold_as, products(buying_price, is_package, package_size, package_buying_price), sales!inner(total_amount)")
            .in("sale_id", saleIds);
          
          // Group cost by sale
          const saleCostMap = {};
          (originalItems || []).forEach(item => {
            const sid = item.sale_id;
-           const p = item.products;
-           const unitCost = stockUnitCost(p || {});
-           const itemCost = Number(item.quantity) * unitCost;
+           const itemCost = getSaleItemCost(item);
            const saleTotal = Number(item.sales?.total_amount || 0);
            
            if (!saleCostMap[sid]) saleCostMap[sid] = { totalCost: 0, saleTotal };
@@ -620,8 +653,6 @@ const dashboardSummary = async (req, res, next) => {
     // Improved Cost of Goods calculation that accounts for packages AND payment attribution.
     // We only count the cost of the portion that was actually paid for today.
     const cost = Math.round(profitRows.reduce((acc, item) => {
-      const p = item.products;
-      const unitCost = stockUnitCost(p || {});
       const sid = item.sales?.id;
       
       let attributionFactor = 1;
@@ -635,7 +666,7 @@ const dashboardSummary = async (req, res, next) => {
         attributionFactor = sale.total_amount > 0 ? cashCaptured / sale.total_amount : 0;
       }
       
-      const itemCost = (Number(item.quantity) * unitCost) * attributionFactor;
+      const itemCost = getSaleItemCost(item) * attributionFactor;
       return acc + itemCost;
     }, 0)) + Math.round(installmentsCostTotal);
 
@@ -660,10 +691,8 @@ const dashboardSummary = async (req, res, next) => {
     let totalExpectedRevenue = 0;
     stockRows.forEach((p) => {
       const qty = quantityFromInventoryEmbed(p.inventory);
-      const unitCost = stockUnitCost(p);
-      const sellingPrice = Number(p.selling_price || 0);
-      totalStockValue += (qty * unitCost);
-      totalExpectedRevenue += (qty * sellingPrice);
+      totalStockValue += getProductStockValue(p, qty);
+      totalExpectedRevenue += getProductExpectedRevenue(p, qty);
     });
 
     // Fetch Today's Stock Movements (Stock In & Adjustments)

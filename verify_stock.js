@@ -11,23 +11,28 @@ async function verify() {
 
   const analysis = data.map(p => {
     const qty = Number(p.inventory?.[0]?.quantity_in_stock || 0);
-    let unitCost = Number(p.buying_price || 0);
-    let isSuspect = false;
+    let totalValue = 0;
+    let details = "";
 
-    if (p.is_package && Number(p.package_buying_price || 0) > 0) {
-      unitCost = Number(p.package_buying_price) / Number(p.package_size);
-    } else if (p.is_package && unitCost > 1000) {
-      // If it's a package but has a high piece price and NO package price set, it's suspect
-      isSuspect = true;
+    if (p.is_package && Number(p.package_size || 0) > 0 && Number(p.package_buying_price || 0) > 0) {
+      const pkgSize = Number(p.package_size);
+      const packages = Math.floor(qty / pkgSize);
+      const extraPieces = qty % pkgSize;
+      const pkgPrice = Number(p.package_buying_price);
+      const piecePrice = Number(p.buying_price || 0);
+      totalValue = (packages * pkgPrice) + (extraPieces * piecePrice);
+      details = `Pkg Size: ${p.package_size}, Pkg Price: ${p.package_buying_price} (${packages} pkg + ${extraPieces} pcs)`;
+    } else {
+      totalValue = qty * Number(p.buying_price || 0);
+      details = p.is_package ? `Pkg Size: ${p.package_size}, Pkg Price: None` : 'Single Piece';
     }
 
     return {
       name: p.name,
       qty,
-      unitCost,
-      totalValue: qty * unitCost,
-      isSuspect,
-      details: p.is_package ? `Pkg Size: ${p.package_size}, Pkg Price: ${p.package_buying_price}` : 'Single Piece'
+      totalValue,
+      isSuspect: false,
+      details
     };
   });
 
@@ -36,7 +41,7 @@ async function verify() {
     .sort((a, b) => b.totalValue - a.totalValue)
     .slice(0, 10)
     .forEach(item => {
-      console.log(`${item.isSuspect ? '⚠️ [SUSPECT]' : '✅'} ${item.name}: ${item.qty} pcs @ ${item.unitCost} = ${item.totalValue.toLocaleString()} RWF (${item.details})`);
+      console.log(`✅ ${item.name}: ${item.qty} pcs = ${item.totalValue.toLocaleString()} RWF (${item.details})`);
     });
 
   const total = analysis.reduce((acc, i) => acc + i.totalValue, 0);
